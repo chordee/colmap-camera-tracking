@@ -18,6 +18,10 @@ Automated pipeline for camera tracking and scene reconstruction using COLMAP and
 2. **FFmpeg** — video processing.
 3. **[COLMAP 4.0+](https://github.com/colmap/colmap)** — feature extraction, matching, and Global Mapper reconstruction.
 4. **Houdini (hython)** — required only for Houdini scene generation.
+5. **Vocabulary tree** *(optional)* — required only when using `--loop` for loop detection.
+   Download `vocab_tree_faiss_flickr100K_words32K.bin` (≈9 MB) from the COLMAP project
+   (<https://demuc.de/colmap/>) and place it in the repo root, or pass its path via
+   `--vocab_tree_path`. The file is intentionally not tracked in git.
 
 ### Python Dependencies
 

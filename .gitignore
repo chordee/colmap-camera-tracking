@@ -33,6 +33,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Vocabulary tree (downloaded on demand, see README)
+vocab_tree_*.bin
+
 # Ignore all root-level directories
 */
 
