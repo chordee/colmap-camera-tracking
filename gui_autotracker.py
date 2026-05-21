@@ -352,12 +352,13 @@ class MainWindow(QMainWindow):
     def _stop(self):
         if self.process is None:
             return
-        self.process.terminate()
-        QTimer.singleShot(3000, self._kill_if_still_running)
+        old_proc = self.process
+        old_proc.terminate()
+        QTimer.singleShot(3000, lambda: self._kill_if_still_running(old_proc))
 
-    def _kill_if_still_running(self):
-        if self.process is not None and self.process.state() != QProcess.NotRunning:
-            self.process.kill()
+    def _kill_if_still_running(self, proc: QProcess):
+        if proc is not None and proc.state() != QProcess.NotRunning:
+            proc.kill()
 
     def _on_output(self):
         if self.process is None:
