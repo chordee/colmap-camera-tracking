@@ -95,6 +95,7 @@ def main():
     for folder in subfolders:
         folder_path = os.path.join(output_path, folder)
         if not _has_reconstruction(folder_path):
+            print(f"Skipping {folder}: no completed COLMAP reconstruction.")
             continue
         sparse_0_path = os.path.join(folder_path, "sparse", "0")
         ply_output_path = os.path.join(folder_path, "points3D.ply")
