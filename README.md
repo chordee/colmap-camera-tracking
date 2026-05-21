@@ -53,6 +53,8 @@ uv run gui_autotracker.py
 
 The GUI allows you to browse for input/output directories, adjust processing scales, select COLMAP camera models, and toggle advanced settings like loop detection or Houdini path configuration.
 
+A **Copy Command** button builds the equivalent `run_autotracker.py` invocation from the current settings, copies it to the clipboard, and echoes it into the log — useful when you want to configure visually but run from a terminal (or paste into a batch script).
+
 ### Arguments
 
 | Argument | Default | Description |
@@ -234,16 +236,17 @@ Processes `./demo-test/walking-forest` and outputs to `./demo-test/walking-fores
 For each processed video:
 
 ```
-<output_dir>/<video_name>/
-├── images/                  # Extracted frames
-├── sparse/                  # COLMAP sparse reconstruction
-├── database.db              # COLMAP feature database
-├── transforms.json          # Camera poses (NeRF format)
-├── points3D.ply             # Point cloud
-├── undistort/
-│   ├── images_undistorted/  # Undistorted frames
-│   └── transforms_undistorted.json
-└── <video_name>.hip         # Houdini project file
+<output_dir>/
+├── <video_name>_transforms.json   # NeRF camera poses (at the top level)
+└── <video_name>/
+    ├── images/                    # Extracted frames
+    ├── sparse/                    # COLMAP sparse reconstruction
+    ├── database.db                # COLMAP feature database
+    ├── points3D.ply               # Point cloud
+    ├── undistort/
+    │   ├── images_undistorted/    # Undistorted frames
+    │   └── transforms_undistorted.json
+    └── <video_name>.hip           # Houdini project file
 ```
 
 ## References
