@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, Qt
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -277,26 +277,47 @@ class MainWindow(QMainWindow):
 
         if self.acescg.isChecked():
             cmd.append("--acescg")
-        if self.lut.text():
-            cmd += ["--lut", self.lut.text()]
-        if self.mask.text():
-            cmd += ["--mask", self.mask.text()]
+        if not self._append_path(cmd, "--lut", self.lut.text(), "LUT file", expect_dir=False):
+            return None
+        if not self._append_path(cmd, "--mask", self.mask.text(), "Mask directory", expect_dir=True):
+            return None
 
         if self.loop.isChecked():
             cmd.append("--loop")
             cmd += ["--loop_period", str(self.loop_period.value())]
             cmd += ["--loop_num_images", str(self.loop_num_images.value())]
-            if self.vocab_tree.text():
-                cmd += ["--vocab_tree_path", self.vocab_tree.text()]
+            if not self._append_path(cmd, "--vocab_tree_path", self.vocab_tree.text(), "Vocab tree", expect_dir=False):
+                return None
 
         if self.skip_houdini.isChecked():
             cmd.append("--skip-houdini")
-        if self.hfs.text():
-            cmd += ["--hfs", self.hfs.text()]
+        if not self._append_path(cmd, "--hfs", self.hfs.text(), "Houdini install (HFS)", expect_dir=True):
+            return None
         if self.multi_cams.isChecked():
             cmd.append("--multi-cams")
 
         return cmd
+
+    def _append_path(self, cmd: list[str], flag: str, value: str, label: str, expect_dir: bool) -> bool:
+        """Append `flag value` to cmd if value is non-empty and exists.
+
+        Returns False (with a QMessageBox warning) if the value is non-empty but
+        the path does not exist or has the wrong type. Empty values are skipped.
+        """
+        if not value:
+            return True
+        path = Path(value)
+        if not path.exists():
+            QMessageBox.warning(self, "Invalid path", f"{label} does not exist:\n{value}")
+            return False
+        if expect_dir and not path.is_dir():
+            QMessageBox.warning(self, "Invalid path", f"{label} is not a directory:\n{value}")
+            return False
+        if not expect_dir and not path.is_file():
+            QMessageBox.warning(self, "Invalid path", f"{label} is not a file:\n{value}")
+            return False
+        cmd += [flag, value]
+        return True
 
     # ------------------------------------------------------------- actions
 
@@ -332,7 +353,10 @@ class MainWindow(QMainWindow):
         if self.process is None:
             return
         self.process.terminate()
-        if not self.process.waitForFinished(3000):
+        QTimer.singleShot(3000, self._kill_if_still_running)
+
+    def _kill_if_still_running(self):
+        if self.process is not None and self.process.state() != QProcess.NotRunning:
             self.process.kill()
 
     def _on_output(self):
