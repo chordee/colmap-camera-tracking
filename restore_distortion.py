@@ -262,6 +262,14 @@ def main():
                     K, D, None, new_K, (w, h), cv2.CV_16SC2
                 )
 
+    # The shared remap maps assume a specific input size. In undistort + K_orig
+    # (expand-mode forward) the source images live in the K_orig canvas; every
+    # other path samples from the K_new canvas.
+    if args.undistort and K_orig is not None:
+        expected_in_w, expected_in_h = w_orig, h_orig
+    else:
+        expected_in_w, expected_in_h = w, h
+
     # 7. Prepare Output Directory
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -297,12 +305,14 @@ def main():
             print(f"  [Skipping] Could not read image: {image_path}")
             continue
 
-        # Double check size consistency for safety
-        if img.shape[1] != w or img.shape[0] != h:
-             # Basic resize on the fly if minor deviation, or skip?
-             # For now, let's assume all images in the folder are same size as the first one.
-             # If strictly different, cv2.remap might crash or produce garbage if maps don't match.
-             pass
+        # The shared remap maps only work for images matching the expected input
+        # size. A mismatched frame would sample garbage, so skip it with a clear
+        # warning rather than emit corrupted output.
+        if img.shape[1] != expected_in_w or img.shape[0] != expected_in_h:
+            print(f"  [Skipping] {os.path.basename(image_path)}: size "
+                  f"{img.shape[1]}x{img.shape[0]} differs from expected "
+                  f"{expected_in_w}x{expected_in_h}; cannot reuse shared maps.")
+            continue
 
         # Perform Remapping (works for both directions now)
         processed_img = cv2.remap(
