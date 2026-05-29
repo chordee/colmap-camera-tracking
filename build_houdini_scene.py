@@ -65,6 +65,18 @@ def create_animated_camera(json_path, global_scale=1, cam_name="Nerfstudio_Anima
     winx = (img_w / 2 - cx) / img_w
     winy = (img_h / 2 - cy) / img_w   # note: divided by img_w, same unit as winx
 
+    # Map COLMAP world (Y down) into Houdini world (Y up). colmap2nerf already
+    # converted the camera basis to the OpenGL convention (Y up, Z back) via
+    # M @ diag(1,-1,-1,1), even under --keep_colmap_coords, but the world frame
+    # is still COLMAP's. A single world Y flip on the row-major c2w matrix
+    # aligns the two.
+    opencv_to_houdini = hou.Matrix4((
+        (1,  0, 0, 0),
+        (0, -1, 0, 0),
+        (0,  0, 1, 0),
+        (0,  0, 0, 1),
+    ))
+
     # 3. Create Houdini nodes
     obj = hou.node("/obj")
     subnet = obj.node("NeRF_Import")
@@ -106,8 +118,9 @@ def create_animated_camera(json_path, global_scale=1, cam_name="Nerfstudio_Anima
             else:
                 flat_mtx = raw_mtx
 
-            # Convert to Houdini Matrix4 and transpose (Column-Major -> Row-Major)
-            h_mtx = hou.Matrix4(tuple(flat_mtx)).transposed()
+            # Convert to Houdini Matrix4, transpose (Column-Major -> Row-Major),
+            # then post-multiply by the OpenCV->Houdini world Y-flip.
+            h_mtx = hou.Matrix4(tuple(flat_mtx)).transposed() * opencv_to_houdini
 
             # Extract transform data
             tra = h_mtx.extractTranslates()
@@ -175,6 +188,13 @@ if __name__ == "__main__":
     scene = subnet.createNode('geo', 'Scene')
     file_node = scene.createNode('file', 'Import_Point_Cloud')
     file_node.parm('file').set(point_cloud_path)
+    # COLMAP world Y-down -> Houdini world Y-up. Same flip applied to the
+    # camera matrix above; do it here on the geo side via a Transform SOP.
+    flip_y = scene.createNode('xform', 'COLMAP_to_Houdini')
+    flip_y.parm('sy').set(-1)
+    flip_y.setInput(0, file_node)
+    flip_y.setDisplayFlag(True)
+    flip_y.setRenderFlag(True)
     scene.setInput(0, subnet.indirectInputs()[0])
     subnet.layoutChildren()
 
