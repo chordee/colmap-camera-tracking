@@ -1,6 +1,6 @@
 [project]
 name = "ai-colmap-camera-tracking"
-version = "0.2.0"
+version = "0.2.1"
 description = "Automated camera tracking pipeline using COLMAP, with undistortion and Houdini scene export."
 readme = "README.md"
 requires-python = ">=3.11"
