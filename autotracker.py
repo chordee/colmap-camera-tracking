@@ -1,16 +1,29 @@
 import os
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")  # must precede `import cv2`
 import sys
 import subprocess
 import glob
 import argparse
 import json
 import cv2
+import numpy as np
 import piexif
 from tqdm import tqdm
 
 # System Binaries (Ensure these are in your PATH)
 FFMPEG = "ffmpeg"
 COLMAP = "colmap"
+
+# Top-level files with these extensions are treated as videos.
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".mxf", ".m4v"}
+
+# ACEScg (AP1 primaries, D60) -> linear sRGB / Rec.709 (D65), Bradford-adapted.
+# Applied to EXR frames when --acescg is set, before the sRGB transfer function.
+ACEScg_TO_SRGB = np.array([
+    [ 1.70505, -0.62179, -0.08326],
+    [-0.13026,  1.14080, -0.01055],
+    [-0.02400, -0.12897,  1.15297],
+], dtype=np.float32)
 
 def run_command(cmd, error_msg, quiet=False):
     """Runs a subprocess command. Returns True on success, False on failure."""
@@ -73,10 +86,63 @@ def _patch_cameras_bin_focal_length(cameras_bin_path, fl_px):
         f.write(data)
 
 
-def process_video(video_path, scenes_dir, idx, total, overlap=12, scale=1.0, mask_path=None, multi_cams=False, acescg=False, lut_path=None, camera_model=None, loop=False, loop_period=5, loop_num_images=50, vocab_tree_path=None, extra_fe=None, extra_sm=None, extra_ma=None, focal_length_mm=None, sensor_width_mm=36.0):
-    # Get base name and extension
-    base_name = os.path.splitext(os.path.basename(video_path))[0]
-    ext = os.path.splitext(video_path)[1]
+def _linear_to_srgb_u8(img, acescg=False):
+    """Convert a linear float EXR frame (BGR or BGRA) to an 8-bit sRGB BGR image.
+
+    Takes the first three channels. When ``acescg`` is set, the linear values are
+    first converted from ACEScg (AP1) to linear Rec.709 primaries. The result is
+    then clipped to [0, 1] (highlights are clipped, not tone-mapped), passed
+    through the sRGB transfer function, and quantised to uint8.
+    """
+    c = img[..., :3].astype(np.float32)  # BGR, linear
+    if acescg:
+        # Matrix is in RGB order; flip channels around the matmul to stay in BGR.
+        c = (c[..., ::-1] @ ACEScg_TO_SRGB.T)[..., ::-1]
+    c = np.clip(c, 0.0, 1.0)
+    srgb = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
+    return (np.clip(srgb, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
+def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
+    """Convert a directory of linear .exr frames into frame_%06d.jpg in img_dir.
+
+    Frames are sorted by filename (zero-padded sequences sort correctly), then
+    each is read as linear float, converted to sRGB (ACEScg-aware when
+    ``acescg`` is set), optionally downscaled, and written with a contiguous
+    1-based index so downstream naming matches the FFmpeg path. Returns the
+    number of JPGs written.
+    """
+    exr_files = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
+    if not exr_files:
+        return 0
+
+    written = 0
+    for src in tqdm(exr_files, desc="        Converting EXR → JPG", unit="frame"):
+        img = cv2.imread(src, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            print(f"        [WARN] Could not read EXR: {os.path.basename(src)} — skipping.")
+            continue
+
+        out = _linear_to_srgb_u8(img, acescg=acescg)
+        if scale != 1.0:
+            out = cv2.resize(out, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+        written += 1
+        save_path = os.path.join(img_dir, f"frame_{written:06d}.jpg")
+        cv2.imwrite(save_path, out, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    return written
+
+
+def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, mask_path=None, multi_cams=False, acescg=False, lut_path=None, camera_model=None, loop=False, loop_period=5, loop_num_images=50, vocab_tree_path=None, extra_fe=None, extra_sm=None, extra_ma=None, focal_length_mm=None, sensor_width_mm=36.0):
+    # An EXR sequence arrives as a directory; a video arrives as a file.
+    is_exr = os.path.isdir(source_path)
+    if is_exr:
+        base_name = os.path.basename(os.path.normpath(source_path))
+        ext = ""
+    else:
+        base_name = os.path.splitext(os.path.basename(source_path))[0]
+        ext = os.path.splitext(source_path)[1]
 
     print(f"\n[{idx}/{total}] === Processing \"{base_name}{ext}\" ===")
 
@@ -121,7 +187,7 @@ def process_video(video_path, scenes_dir, idx, total, overlap=12, scale=1.0, mas
     # 2. Try auto-detection in video directory
     if not final_mask_path:
         # Check sibling directory (e.g., video_dir/basename_mask)
-        candidate = os.path.join(os.path.dirname(video_path), f"{base_name}_mask")
+        candidate = os.path.join(os.path.dirname(source_path), f"{base_name}_mask")
         if os.path.isdir(candidate):
             final_mask_path = candidate
 
@@ -154,40 +220,51 @@ def process_video(video_path, scenes_dir, idx, total, overlap=12, scale=1.0, mas
                 print(f"          [WARN] Mask directory exists but contains no .png files. Ignoring.")
                 final_mask_path = None
 
-    # 1) Extract every frame
-    print("        [1/4] Extracting frames ...")
-    frame_pattern = os.path.join(img_dir, "frame_%06d.jpg")
-    cmd_ffmpeg = [
-        FFMPEG, "-loglevel", "error", "-stats", "-i", video_path,
-        "-qscale:v", "2"
-    ]
-    
-    # Build video filters
-    filters = []
-    
-    # ACEScg to sRGB conversion (Generic transform using zscale)
-    if acescg:
-        # tin=linear (Linear input), t=iec61966-2-1 (sRGB EOTF output)
-        # pin=bt2020 (ACEScg is AP1, bt2020 is closest standard primary in zscale)
-        # p=bt709 (sRGB/Rec709 primaries)
-        filters.append("zscale=tin=linear:t=iec61966-2-1:pin=bt2020:p=bt709:min=bt2020nc:m=bt709")
+    # 1) Produce frame_%06d.jpg in img_dir — from an EXR sequence (cv2) or a
+    #    video (FFmpeg).
+    if is_exr:
+        print("        [1/4] Converting EXR sequence → JPG ...")
+        if acescg:
+            print("        • ACEScg (AP1) → sRGB colour conversion enabled.")
+        if lut_path:
+            print("        [WARN] --lut is FFmpeg-only and ignored for EXR input.")
+        if extract_exr_sequence(source_path, img_dir, scale=scale, acescg=acescg) == 0:
+            print(f"        × No EXR frames converted – skipping \"{base_name}\".")
+            return
+    else:
+        print("        [1/4] Extracting frames ...")
+        frame_pattern = os.path.join(img_dir, "frame_%06d.jpg")
+        cmd_ffmpeg = [
+            FFMPEG, "-loglevel", "error", "-stats", "-i", source_path,
+            "-qscale:v", "2"
+        ]
 
-    # Apply LUT if provided
-    if lut_path:
-        # Use lut3d filter for .cube files
-        safe_lut_path = lut_path.replace("\\", "/") # FFmpeg filters prefer forward slashes
-        filters.append(f"lut3d='{safe_lut_path}'")
+        # Build video filters
+        filters = []
 
-    if scale != 1.0:
-        filters.append(f"scale=iw*{scale}:ih*{scale}")
+        # ACEScg to sRGB conversion (Generic transform using zscale)
+        if acescg:
+            # tin=linear (Linear input), t=iec61966-2-1 (sRGB EOTF output)
+            # pin=bt2020 (ACEScg is AP1, bt2020 is closest standard primary in zscale)
+            # p=bt709 (sRGB/Rec709 primaries)
+            filters.append("zscale=tin=linear:t=iec61966-2-1:pin=bt2020:p=bt709:min=bt2020nc:m=bt709")
 
-    if filters:
-        cmd_ffmpeg.extend(["-vf", ",".join(filters)])
+        # Apply LUT if provided
+        if lut_path:
+            # Use lut3d filter for .cube files
+            safe_lut_path = lut_path.replace("\\", "/") # FFmpeg filters prefer forward slashes
+            filters.append(f"lut3d='{safe_lut_path}'")
 
-    cmd_ffmpeg.append(frame_pattern)
+        if scale != 1.0:
+            filters.append(f"scale=iw*{scale}:ih*{scale}")
 
-    if not run_command(cmd_ffmpeg, f"        × FFmpeg failed – skipping \"{base_name}\"."):
-        return
+        if filters:
+            cmd_ffmpeg.extend(["-vf", ",".join(filters)])
+
+        cmd_ffmpeg.append(frame_pattern)
+
+        if not run_command(cmd_ffmpeg, f"        × FFmpeg failed – skipping \"{base_name}\"."):
+            return
 
     # Check if frames were extracted
     all_images = glob.glob(os.path.join(img_dir, "*.jpg"))
@@ -436,13 +513,37 @@ def main():
         input("Press Enter to exit...")
         sys.exit(1)
 
-    # Count videos
-    # Filter for files only
-    video_files = [f for f in os.listdir(videos_dir) if os.path.isfile(os.path.join(videos_dir, f))]
-    total = len(video_files)
+    # Discover inputs:
+    #   - top-level video files
+    #   - subfolders that hold an EXR sequence (one subfolder = one scene)
+    #   - or, if the input directory itself holds loose *.exr frames, the whole
+    #     directory is treated as a single EXR sequence (scene = its own name)
+    # "*_mask" folders are skipped — they hold PNG masks, not source frames.
+    entries = sorted(os.listdir(videos_dir))
+    video_files = [
+        os.path.join(videos_dir, f) for f in entries
+        if os.path.isfile(os.path.join(videos_dir, f))
+        and os.path.splitext(f)[1].lower() in VIDEO_EXTS
+    ]
+    exr_dirs = [
+        os.path.join(videos_dir, f) for f in entries
+        if os.path.isdir(os.path.join(videos_dir, f))
+        and not f.endswith("_mask")
+        and glob.glob(os.path.join(videos_dir, f, "*.exr"))
+    ]
+    # Loose EXR frames directly under the input dir => the dir is one sequence.
+    if glob.glob(os.path.join(videos_dir, "*.exr")):
+        if exr_dirs:
+            print("[WARN] Found loose .exr frames AND EXR subfolders in the input "
+                  "directory. Both will be processed as separate scenes — move the "
+                  "loose frames into their own subfolder if that's not intended.")
+        exr_dirs.insert(0, videos_dir)
+
+    sources = video_files + exr_dirs
+    total = len(sources)
 
     if total == 0:
-        print(f"[INFO] No video files found in \"{videos_dir}\".")
+        print(f"[INFO] No video files or EXR sequences found in \"{videos_dir}\".")
         input("Press Enter to exit...")
         sys.exit(0)
 
@@ -475,10 +576,10 @@ def main():
     extra_sm = parse_extra(args.extra_sm)
     extra_ma = parse_extra(args.extra_ma)
 
-    for idx, video_file in enumerate(video_files, 1):
+    for idx, source_path in enumerate(sources, 1):
         process_video(
-            os.path.join(videos_dir, video_file), 
-            scenes_dir, 
+            source_path,
+            scenes_dir,
             idx, 
             total, 
             overlap=args.overlap, 
