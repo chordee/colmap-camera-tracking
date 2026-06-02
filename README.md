@@ -1,11 +1,11 @@
 # AI Colmap Camera Tracking
 
-Automated pipeline for camera tracking and scene reconstruction using COLMAP and NeRF-compatible formats. Processes video inputs, performs sparse 3D reconstruction, undistorts footage, and exports camera data for use in Houdini or NeRF training.
+Automated pipeline for camera tracking and scene reconstruction using COLMAP and NeRF-compatible formats. Processes video files or linear EXR sequences, performs sparse 3D reconstruction, undistorts footage, and exports camera data for use in Houdini or NeRF training.
 
 ## Features
 
-- **Automated Workflow:** Batch processes multiple video files.
-- **Frame Extraction:** Uses FFmpeg to extract frames from input videos.
+- **Automated Workflow:** Batch processes multiple video files and EXR sequences.
+- **Frame Extraction:** Uses FFmpeg to extract frames from videos; converts linear EXR sequences to JPG frames via OpenCV (`--acescg` applies an ACEScg → sRGB colour transform).
 - **Feature Extraction & Matching:** Utilises COLMAP for feature extraction and sequential matching.
 - **Sparse Reconstruction:** Uses **COLMAP Global Mapper** (requires COLMAP 4.0+).
 - **NeRF Conversion:** Converts COLMAP data to `transforms.json` (NeRF format).
@@ -38,8 +38,19 @@ uv sync
 The main entry point is `run_autotracker.py`.
 
 ```bash
-uv run python run_autotracker.py <input_videos_dir> <output_dir> [options]
+uv run python run_autotracker.py <input_dir> <output_dir> [options]
 ```
+
+### Input types
+
+The input directory may contain either of the following (each becomes one scene):
+
+- **Video files** (`.mp4`, `.mov`, `.avi`, `.mkv`, `.mxf`, `.m4v`) — one scene per file.
+- **EXR sequences** — either a subfolder of `*.exr` frames per sequence
+  (`<input_dir>/shotA/*.exr`), or a directory of loose `*.exr` frames passed
+  directly as `<input_dir>`. EXR frames are linear, so they are converted to sRGB
+  before tracking; add `--acescg` if the source is ACEScg (AP1) to apply the
+  correct gamut transform. (`--lut` is FFmpeg-only and does not apply to EXR.)
 
 ## Graphical User Interface (GUI)
 
@@ -59,14 +70,14 @@ A **Copy Command** button builds the equivalent `run_autotracker.py` invocation 
 
 | Argument | Default | Description |
 |---|---|---|
-| `input_videos_dir` | — | Directory containing source video files (`.mp4`, `.mov`, …) |
+| `input_dir` | — | Directory containing source video files (`.mp4`, `.mov`, …) and/or EXR sequences (see [Input types](#input-types)) |
 | `output_dir` | — | Directory for all output data |
 | `--scale` | `0.5` | Image scaling factor applied before processing |
 | `--overlap` | `12` | Sequential matching overlap (number of frames) |
 | `--skip-houdini` | off | Skip Houdini `.hip` generation |
 | `--hfs` | — | Path to Houdini installation directory (e.g. `C:\Program Files\Side Effects Software\Houdini 20.0.625`). If omitted, `hython` must be in `PATH`. |
 | `--multi-cams` | off | Treat each video as a separate camera (useful for multi-device shoots) |
-| `--acescg` | off | Convert input from ACEScg to sRGB before processing |
+| `--acescg` | off | Treat input as ACEScg and convert to sRGB before processing (applies to both video and EXR sequences) |
 | `--lut` | — | Path to a `.cube` LUT file for colour-space conversion |
 | `--mask` | — | Path to a directory containing per-frame masks |
 | `--focal_length_mm` | — | Lens focal length in mm (e.g. `24`). Locks COLMAP to this value instead of estimating it. |
@@ -209,7 +220,7 @@ Processes `./demo-test/walking-forest` and outputs to `./demo-test/walking-fores
 
 ## Pipeline Steps
 
-1. **Frame extraction** — FFmpeg extracts frames from each input video.
+1. **Frame extraction** — FFmpeg extracts frames from each input video; EXR sequences are converted to JPG frames with OpenCV (linear → sRGB, ACEScg-aware with `--acescg`).
 2. **Feature extraction & matching** — COLMAP `feature_extractor` + `sequential_matcher`.
 3. **Sparse reconstruction** — COLMAP `global_mapper` (requires COLMAP 4.0+).
 4. **Model export** — Sparse model converted to TXT and PLY formats.
