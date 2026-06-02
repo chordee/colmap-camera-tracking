@@ -513,9 +513,12 @@ def main():
         input("Press Enter to exit...")
         sys.exit(1)
 
-    # Discover inputs: top-level video files, plus subfolders that hold an EXR
-    # sequence (one subfolder = one scene). "*_mask" folders are skipped — they
-    # hold PNG masks, not source frames.
+    # Discover inputs:
+    #   - top-level video files
+    #   - subfolders that hold an EXR sequence (one subfolder = one scene)
+    #   - or, if the input directory itself holds loose *.exr frames, the whole
+    #     directory is treated as a single EXR sequence (scene = its own name)
+    # "*_mask" folders are skipped — they hold PNG masks, not source frames.
     entries = sorted(os.listdir(videos_dir))
     video_files = [
         os.path.join(videos_dir, f) for f in entries
@@ -528,6 +531,10 @@ def main():
         and not f.endswith("_mask")
         and glob.glob(os.path.join(videos_dir, f, "*.exr"))
     ]
+    # Loose EXR frames directly under the input dir => the dir is one sequence.
+    if glob.glob(os.path.join(videos_dir, "*.exr")):
+        exr_dirs.insert(0, videos_dir)
+
     sources = video_files + exr_dirs
     total = len(sources)
 
