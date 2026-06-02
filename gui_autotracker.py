@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
         self.input_picker = PathPicker(mode="dir")
         self.output_picker = PathPicker(mode="dir")
 
-        form.addRow("Input videos dir:", self.input_picker)
+        form.addRow("Input dir (videos / EXR seqs):", self.input_picker)
         form.addRow("Output dir:", self.output_picker)
         return group
 
@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
         output_dir = self.output_picker.text()
 
         if not input_dir or not Path(input_dir).is_dir():
-            QMessageBox.warning(self, "Missing input", "Please choose a valid input videos directory.")
+            QMessageBox.warning(self, "Missing input", "Please choose a valid input directory (containing videos or EXR sequence subfolders).")
             return None
         if not output_dir:
             QMessageBox.warning(self, "Missing output", "Please choose an output directory.")
