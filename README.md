@@ -52,6 +52,13 @@ The input directory may contain either of the following (each becomes one scene)
   before tracking; add `--acescg` if the source is ACEScg (AP1) to apply the
   correct gamut transform. (`--lut` is FFmpeg-only and does not apply to EXR.)
 
+> **Note on `--acescg` colour accuracy:** the EXR path applies an exact ACEScg
+> (AP1) → Rec.709 matrix, while the video path approximates it with FFmpeg's
+> `zscale` (AP1 ≈ bt2020). Results can differ for highly saturated colours. This
+> only affects how the extracted JPGs look (e.g. the Houdini background plate);
+> COLMAP tracking is unaffected since it works on luminance. For colour-critical
+> video work, prefer a proper `.cube` LUT via `--lut`.
+
 ## Graphical User Interface (GUI)
 
 A PySide6-based GUI is available for a more user-friendly experience. It wraps the `run_autotracker.py` script and provides a real-time log of the processing steps.
@@ -120,8 +127,11 @@ uv run python run_autotracker.py ./in ./out --extra_fe params.json
 The pipeline supports per-frame masks to exclude moving objects or unwanted regions from reconstruction.
 
 **Rules:**
-1. **Auto-detection:** For a video `shot01.mp4`, the script looks for a sibling directory named `shot01_mask`.
-2. **Custom root:** `--mask <path>` looks for `<video_name>_mask` inside the specified path.
+1. **Auto-detection:** The script looks for a sibling directory named `<scene>_mask`, where `<scene>` is the input's base name:
+   - Video `shot01.mp4` → `shot01_mask/` beside the video.
+   - EXR subfolder sequence `<input_dir>/shotA/*.exr` → `<input_dir>/shotA_mask/`.
+   - Loose EXR frames passed as `<input_dir>` → `<input_dir>_mask/` at the parent level.
+2. **Custom root:** `--mask <path>` looks for `<scene>_mask` inside the specified path.
 3. **Filename format:** PNG files named `frame_000001.jpg.png`. If `frame_000001.png` is found it is automatically renamed to match COLMAP requirements.
 
 ### Example

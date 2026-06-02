@@ -533,6 +533,10 @@ def main():
     ]
     # Loose EXR frames directly under the input dir => the dir is one sequence.
     if glob.glob(os.path.join(videos_dir, "*.exr")):
+        if exr_dirs:
+            print("[WARN] Found loose .exr frames AND EXR subfolders in the input "
+                  "directory. Both will be processed as separate scenes — move the "
+                  "loose frames into their own subfolder if that's not intended.")
         exr_dirs.insert(0, videos_dir)
 
     sources = video_files + exr_dirs
