@@ -17,6 +17,14 @@ COLMAP = "colmap"
 # Top-level files with these extensions are treated as videos.
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".mxf", ".m4v"}
 
+# ACEScg (AP1 primaries, D60) -> linear sRGB / Rec.709 (D65), Bradford-adapted.
+# Applied to EXR frames when --acescg is set, before the sRGB transfer function.
+ACEScg_TO_SRGB = np.array([
+    [ 1.70505, -0.62179, -0.08326],
+    [-0.13026,  1.14080, -0.01055],
+    [-0.02400, -0.12897,  1.15297],
+], dtype=np.float32)
+
 def run_command(cmd, error_msg, quiet=False):
     """Runs a subprocess command. Returns True on success, False on failure."""
     try:
@@ -78,24 +86,31 @@ def _patch_cameras_bin_focal_length(cameras_bin_path, fl_px):
         f.write(data)
 
 
-def _linear_to_srgb_u8(img):
+def _linear_to_srgb_u8(img, acescg=False):
     """Convert a linear float EXR frame (BGR or BGRA) to an 8-bit sRGB BGR image.
 
-    Takes the first three channels, clips to [0, 1] (highlights are clipped, not
-    tone-mapped), applies the sRGB transfer function, and quantises to uint8.
+    Takes the first three channels. When ``acescg`` is set, the linear values are
+    first converted from ACEScg (AP1) to linear Rec.709 primaries. The result is
+    then clipped to [0, 1] (highlights are clipped, not tone-mapped), passed
+    through the sRGB transfer function, and quantised to uint8.
     """
-    c = np.clip(img[..., :3].astype(np.float32), 0.0, 1.0)
+    c = img[..., :3].astype(np.float32)  # BGR, linear
+    if acescg:
+        # Matrix is in RGB order; flip channels around the matmul to stay in BGR.
+        c = (c[..., ::-1] @ ACEScg_TO_SRGB.T)[..., ::-1]
+    c = np.clip(c, 0.0, 1.0)
     srgb = np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
     return (np.clip(srgb, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
 
-def extract_exr_sequence(exr_dir, img_dir, scale=1.0):
+def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
     """Convert a directory of linear .exr frames into frame_%06d.jpg in img_dir.
 
     Frames are sorted by filename (zero-padded sequences sort correctly), then
-    each is read as linear float, converted to sRGB, optionally downscaled, and
-    written with a contiguous 1-based index so downstream naming matches the
-    FFmpeg path. Returns the number of JPGs written.
+    each is read as linear float, converted to sRGB (ACEScg-aware when
+    ``acescg`` is set), optionally downscaled, and written with a contiguous
+    1-based index so downstream naming matches the FFmpeg path. Returns the
+    number of JPGs written.
     """
     exr_files = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
     if not exr_files:
@@ -108,7 +123,7 @@ def extract_exr_sequence(exr_dir, img_dir, scale=1.0):
             print(f"        [WARN] Could not read EXR: {os.path.basename(src)} — skipping.")
             continue
 
-        out = _linear_to_srgb_u8(img)
+        out = _linear_to_srgb_u8(img, acescg=acescg)
         if scale != 1.0:
             out = cv2.resize(out, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
@@ -209,9 +224,11 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
     #    video (FFmpeg).
     if is_exr:
         print("        [1/4] Converting EXR sequence → JPG ...")
-        if acescg or lut_path:
-            print("        [WARN] --acescg / --lut are FFmpeg-only and ignored for EXR input.")
-        if extract_exr_sequence(source_path, img_dir, scale=scale) == 0:
+        if acescg:
+            print("        • ACEScg (AP1) → sRGB colour conversion enabled.")
+        if lut_path:
+            print("        [WARN] --lut is FFmpeg-only and ignored for EXR input.")
+        if extract_exr_sequence(source_path, img_dir, scale=scale, acescg=acescg) == 0:
             print(f"        × No EXR frames converted – skipping \"{base_name}\".")
             return
     else:
