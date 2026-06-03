@@ -1,11 +1,11 @@
 # AI Colmap Camera Tracking
 
-Automated pipeline for camera tracking and scene reconstruction using COLMAP and NeRF-compatible formats. Processes video files or linear EXR sequences, performs sparse 3D reconstruction, undistorts footage, and exports camera data for use in Houdini or NeRF training.
+Automated pipeline for camera tracking and scene reconstruction using COLMAP and NeRF-compatible formats. Processes video files, linear EXR sequences, or JPG sequences, performs sparse 3D reconstruction, undistorts footage, and exports camera data for use in Houdini or NeRF training.
 
 ## Features
 
-- **Automated Workflow:** Batch processes multiple video files and EXR sequences.
-- **Frame Extraction:** Uses FFmpeg to extract frames from videos; converts linear EXR sequences to JPG frames via OpenCV (`--acescg` applies an ACEScg → sRGB colour transform).
+- **Automated Workflow:** Batch processes multiple video files, EXR sequences, and JPG sequences.
+- **Frame Extraction:** Uses FFmpeg to extract frames from videos; converts linear EXR sequences to JPG frames via OpenCV (`--acescg` applies an ACEScg → sRGB colour transform); ingests existing JPG sequences directly (scale + renumber only).
 - **Feature Extraction & Matching:** Utilises COLMAP for feature extraction and sequential matching.
 - **Sparse Reconstruction:** Uses **COLMAP Global Mapper** (requires COLMAP 4.0+).
 - **NeRF Conversion:** Converts COLMAP data to `transforms.json` (NeRF format).
@@ -51,6 +51,10 @@ The input directory may contain either of the following (each becomes one scene)
   directly as `<input_dir>`. EXR frames are linear, so they are converted to sRGB
   before tracking; add `--acescg` if the source is ACEScg (AP1) to apply the
   correct gamut transform. (`--lut` is FFmpeg-only and does not apply to EXR.)
+- **JPG sequences** — same layout as EXR (`*.jpg`/`*.jpeg` in a subfolder, or
+  loose in `<input_dir>`). Frames are renumbered to `frame_%06d.jpg`; with
+  `--scale 1.0` they are copied byte-for-byte (no recompression), otherwise
+  resized. No colour conversion is applied (`--acescg` / `--lut` are ignored).
 
 > **Note on `--acescg` colour accuracy:** the EXR path applies an exact ACEScg
 > (AP1) → Rec.709 matrix, while the video path approximates it with FFmpeg's
@@ -77,7 +81,7 @@ A **Copy Command** button builds the equivalent `run_autotracker.py` invocation 
 
 | Argument | Default | Description |
 |---|---|---|
-| `input_dir` | — | Directory containing source video files (`.mp4`, `.mov`, …) and/or EXR sequences (see [Input types](#input-types)) |
+| `input_dir` | — | Directory containing source video files (`.mp4`, `.mov`, …) and/or EXR / JPG sequences (see [Input types](#input-types)) |
 | `output_dir` | — | Directory for all output data |
 | `--scale` | `0.5` | Image scaling factor applied before processing |
 | `--overlap` | `12` | Sequential matching overlap (number of frames) |
@@ -129,8 +133,8 @@ The pipeline supports per-frame masks to exclude moving objects or unwanted regi
 **Rules:**
 1. **Auto-detection:** The script looks for a sibling directory named `<scene>_mask`, where `<scene>` is the input's base name:
    - Video `shot01.mp4` → `shot01_mask/` beside the video.
-   - EXR subfolder sequence `<input_dir>/shotA/*.exr` → `<input_dir>/shotA_mask/`.
-   - Loose EXR frames passed as `<input_dir>` → `<input_dir>_mask/` at the parent level.
+   - Subfolder sequence (EXR/JPG) `<input_dir>/shotA/` → `<input_dir>/shotA_mask/`.
+   - Loose sequence frames passed as `<input_dir>` → `<input_dir>_mask/` at the parent level.
 2. **Custom root:** `--mask <path>` looks for `<scene>_mask` inside the specified path.
 3. **Filename format:** PNG files named `frame_000001.jpg.png`. If `frame_000001.png` is found it is automatically renamed to match COLMAP requirements.
 
@@ -230,7 +234,7 @@ Processes `./demo-test/walking-forest` and outputs to `./demo-test/walking-fores
 
 ## Pipeline Steps
 
-1. **Frame extraction** — FFmpeg extracts frames from each input video; EXR sequences are converted to JPG frames with OpenCV (linear → sRGB, ACEScg-aware with `--acescg`).
+1. **Frame extraction** — FFmpeg extracts frames from each input video; EXR sequences are converted to JPG frames with OpenCV (linear → sRGB, ACEScg-aware with `--acescg`); JPG sequences are renumbered (and scaled if requested) with no colour conversion.
 2. **Feature extraction & matching** — COLMAP `feature_extractor` + `sequential_matcher`.
 3. **Sparse reconstruction** — COLMAP `global_mapper` (requires COLMAP 4.0+).
 4. **Model export** — Sparse model converted to TXT and PLY formats.

@@ -3,6 +3,7 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")  # must precede `import c
 import sys
 import subprocess
 import glob
+import shutil
 import argparse
 import json
 import cv2
@@ -134,10 +135,55 @@ def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
     return written
 
 
+def extract_jpg_sequence(jpg_dir, img_dir, scale=1.0):
+    """Copy/scale a directory of .jpg/.jpeg frames into frame_%06d.jpg in img_dir.
+
+    Frames are sorted by filename and renumbered with a contiguous 1-based index
+    so downstream naming matches the FFmpeg path. With scale == 1.0 the originals
+    are copied byte-for-byte (no recompression); otherwise each frame is resized.
+    No colour conversion is applied. Returns the number of frames written.
+    """
+    jpg_files = sorted(set(
+        glob.glob(os.path.join(jpg_dir, "*.jpg")) + glob.glob(os.path.join(jpg_dir, "*.jpeg"))
+    ))
+    if not jpg_files:
+        return 0
+
+    written = 0
+    for src in tqdm(jpg_files, desc="        Preparing JPG sequence", unit="frame"):
+        written += 1
+        save_path = os.path.join(img_dir, f"frame_{written:06d}.jpg")
+        if scale == 1.0:
+            shutil.copyfile(src, save_path)
+        else:
+            img = cv2.imread(src)
+            if img is None:
+                print(f"        [WARN] Could not read JPG: {os.path.basename(src)} — skipping.")
+                written -= 1
+                continue
+            out = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            cv2.imwrite(save_path, out, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    return written
+
+
+def _sequence_kind(d):
+    """Return the image-sequence kind held directly in directory ``d``.
+
+    "exr" if it contains *.exr, "jpg" if it contains *.jpg/*.jpeg, else None.
+    EXR takes precedence if (unusually) both are present.
+    """
+    if glob.glob(os.path.join(d, "*.exr")):
+        return "exr"
+    if glob.glob(os.path.join(d, "*.jpg")) or glob.glob(os.path.join(d, "*.jpeg")):
+        return "jpg"
+    return None
+
+
 def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, mask_path=None, multi_cams=False, acescg=False, lut_path=None, camera_model=None, loop=False, loop_period=5, loop_num_images=50, vocab_tree_path=None, extra_fe=None, extra_sm=None, extra_ma=None, focal_length_mm=None, sensor_width_mm=36.0):
-    # An EXR sequence arrives as a directory; a video arrives as a file.
-    is_exr = os.path.isdir(source_path)
-    if is_exr:
+    # An image sequence (EXR or JPG) arrives as a directory; a video as a file.
+    seq_kind = _sequence_kind(source_path) if os.path.isdir(source_path) else None
+    if seq_kind:
         base_name = os.path.basename(os.path.normpath(source_path))
         ext = ""
     else:
@@ -220,9 +266,9 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
                 print(f"          [WARN] Mask directory exists but contains no .png files. Ignoring.")
                 final_mask_path = None
 
-    # 1) Produce frame_%06d.jpg in img_dir — from an EXR sequence (cv2) or a
-    #    video (FFmpeg).
-    if is_exr:
+    # 1) Produce frame_%06d.jpg in img_dir — from an EXR sequence, a JPG
+    #    sequence (both cv2), or a video (FFmpeg).
+    if seq_kind == "exr":
         print("        [1/4] Converting EXR sequence → JPG ...")
         if acescg:
             print("        • ACEScg (AP1) → sRGB colour conversion enabled.")
@@ -230,6 +276,13 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
             print("        [WARN] --lut is FFmpeg-only and ignored for EXR input.")
         if extract_exr_sequence(source_path, img_dir, scale=scale, acescg=acescg) == 0:
             print(f"        × No EXR frames converted – skipping \"{base_name}\".")
+            return
+    elif seq_kind == "jpg":
+        print("        [1/4] Preparing JPG sequence ...")
+        if acescg or lut_path:
+            print("        [WARN] --acescg / --lut do not apply to JPG sequences and are ignored.")
+        if extract_jpg_sequence(source_path, img_dir, scale=scale) == 0:
+            print(f"        × No JPG frames prepared – skipping \"{base_name}\".")
             return
     else:
         print("        [1/4] Extracting frames ...")
@@ -515,9 +568,9 @@ def main():
 
     # Discover inputs:
     #   - top-level video files
-    #   - subfolders that hold an EXR sequence (one subfolder = one scene)
-    #   - or, if the input directory itself holds loose *.exr frames, the whole
-    #     directory is treated as a single EXR sequence (scene = its own name)
+    #   - subfolders that hold an image sequence — EXR or JPG (one subfolder = one scene)
+    #   - or, if the input directory itself holds loose sequence frames, the whole
+    #     directory is treated as a single sequence (scene = its own name)
     # "*_mask" folders are skipped — they hold PNG masks, not source frames.
     entries = sorted(os.listdir(videos_dir))
     video_files = [
@@ -525,25 +578,25 @@ def main():
         if os.path.isfile(os.path.join(videos_dir, f))
         and os.path.splitext(f)[1].lower() in VIDEO_EXTS
     ]
-    exr_dirs = [
+    seq_dirs = [
         os.path.join(videos_dir, f) for f in entries
         if os.path.isdir(os.path.join(videos_dir, f))
         and not f.endswith("_mask")
-        and glob.glob(os.path.join(videos_dir, f, "*.exr"))
+        and _sequence_kind(os.path.join(videos_dir, f))
     ]
-    # Loose EXR frames directly under the input dir => the dir is one sequence.
-    if glob.glob(os.path.join(videos_dir, "*.exr")):
-        if exr_dirs:
-            print("[WARN] Found loose .exr frames AND EXR subfolders in the input "
-                  "directory. Both will be processed as separate scenes — move the "
-                  "loose frames into their own subfolder if that's not intended.")
-        exr_dirs.insert(0, videos_dir)
+    # Loose sequence frames directly under the input dir => the dir is one sequence.
+    if _sequence_kind(videos_dir):
+        if seq_dirs:
+            print("[WARN] Found loose sequence frames AND sequence subfolders in the "
+                  "input directory. Both will be processed as separate scenes — move "
+                  "the loose frames into their own subfolder if that's not intended.")
+        seq_dirs.insert(0, videos_dir)
 
-    sources = video_files + exr_dirs
+    sources = video_files + seq_dirs
     total = len(sources)
 
     if total == 0:
-        print(f"[INFO] No video files or EXR sequences found in \"{videos_dir}\".")
+        print(f"[INFO] No video files or image sequences found in \"{videos_dir}\".")
         input("Press Enter to exit...")
         sys.exit(0)
 
