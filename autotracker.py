@@ -104,6 +104,20 @@ def _linear_to_srgb_u8(img, acescg=False):
     return (np.clip(srgb, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
 
+def _list_frames(d, exts):
+    """Return sorted paths of files directly in ``d`` whose extension is in ``exts``.
+
+    Extension matching is case-insensitive so camera/export outputs such as
+    ``.JPG`` or ``.EXR`` are picked up on case-sensitive filesystems too.
+    """
+    return sorted(
+        os.path.join(d, name)
+        for name in os.listdir(d)
+        if os.path.isfile(os.path.join(d, name))
+        and os.path.splitext(name)[1].lower() in exts
+    )
+
+
 def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
     """Convert a directory of linear .exr frames into frame_%06d.jpg in img_dir.
 
@@ -113,7 +127,7 @@ def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
     1-based index so downstream naming matches the FFmpeg path. Returns the
     number of JPGs written.
     """
-    exr_files = sorted(glob.glob(os.path.join(exr_dir, "*.exr")))
+    exr_files = _list_frames(exr_dir, {".exr"})
     if not exr_files:
         return 0
 
@@ -143,9 +157,7 @@ def extract_jpg_sequence(jpg_dir, img_dir, scale=1.0):
     are copied byte-for-byte (no recompression); otherwise each frame is resized.
     No colour conversion is applied. Returns the number of frames written.
     """
-    jpg_files = sorted(set(
-        glob.glob(os.path.join(jpg_dir, "*.jpg")) + glob.glob(os.path.join(jpg_dir, "*.jpeg"))
-    ))
+    jpg_files = _list_frames(jpg_dir, {".jpg", ".jpeg"})
     if not jpg_files:
         return 0
 
@@ -170,12 +182,12 @@ def extract_jpg_sequence(jpg_dir, img_dir, scale=1.0):
 def _sequence_kind(d):
     """Return the image-sequence kind held directly in directory ``d``.
 
-    "exr" if it contains *.exr, "jpg" if it contains *.jpg/*.jpeg, else None.
-    EXR takes precedence if (unusually) both are present.
+    "exr" if it contains *.exr, "jpg" if it contains *.jpg/*.jpeg, else None
+    (case-insensitive). EXR takes precedence if (unusually) both are present.
     """
-    if glob.glob(os.path.join(d, "*.exr")):
+    if _list_frames(d, {".exr"}):
         return "exr"
-    if glob.glob(os.path.join(d, "*.jpg")) or glob.glob(os.path.join(d, "*.jpeg")):
+    if _list_frames(d, {".jpg", ".jpeg"}):
         return "jpg"
     return None
 
