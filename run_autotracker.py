@@ -83,7 +83,7 @@ def main():
         sys.exit(1)
 
     # A scene only counts as ready for downstream steps when sparse/0/cameras.bin
-    # exists — matching the completion marker used by autotracker.py.
+    # exists -- matching the completion marker used by autotracker.py.
     def _has_reconstruction(folder_path):
         return os.path.exists(os.path.join(folder_path, "sparse", "0", "cameras.bin"))
 

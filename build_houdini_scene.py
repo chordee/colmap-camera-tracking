@@ -51,7 +51,7 @@ def create_animated_camera(json_path, aperture_width=36.0):
     # files (where no expansion occurred).
     sensor_w = float(data.get("sensor_w", img_w))
 
-    # Physical focal length — must be derived from the original sensor width,
+    # Physical focal length -- must be derived from the original sensor width,
     # not the (potentially expanded) canvas width, so the mm value is stable.
     focal_mm = (fl_x / sensor_w) * aperture_width
 
@@ -62,8 +62,8 @@ def create_animated_camera(json_path, aperture_width=36.0):
 
     # Principal-point offset expressed as a fraction of the canvas width.
     # Houdini winx/winy shift the projection window; 0 = centred.
-    # winx > 0 → window centre moves left  (principal point left of centre)
-    # winy > 0 → window centre moves up    (principal point above centre)
+    # winx > 0 -> window centre moves left  (principal point left of centre)
+    # winy > 0 -> window centre moves up    (principal point above centre)
     winx = (img_w / 2 - cx) / img_w
     winy = (img_h / 2 - cy) / img_w   # note: divided by img_w, same unit as winx
 
@@ -72,16 +72,16 @@ def create_animated_camera(json_path, aperture_width=36.0):
     # even under --keep_colmap_coords, but the world frame is still COLMAP's.
     #
     # The correct world conversion is a *proper rotation* (det = +1) applied
-    # identically to the camera and the point cloud — Rx(180) = diag(1,-1,-1),
+    # identically to the camera and the point cloud -- Rx(180) = diag(1,-1,-1),
     # i.e. flip both Y and Z. This is the standard COLMAP/OpenCV -> OpenGL/Houdini
     # rigid transform (Blender's COLMAP importer uses the same).
     #
     # A reflection like a Y-only flip (det = -1) cannot work: it mirrors the
-    # rendered image, and no camera-basis tweak fixes it — you can only trade an
+    # rendered image, and no camera-basis tweak fixes it -- you can only trade an
     # upside-down image for a left/right-mirrored one. Flipping Y *and* Z keeps
     # the determinant +1, so the camera stays a valid rotation and the view is
     # both upright and un-mirrored. (Sanity check: an identity COLMAP camera,
-    # M = diag(1,-1,-1,1), maps to the Houdini identity camera — looks -Z, up +Y.)
+    # M = diag(1,-1,-1,1), maps to the Houdini identity camera -- looks -Z, up +Y.)
     flip_yz = hou.Matrix4((
         (1,  0,  0, 0),
         (0, -1,  0, 0),
@@ -193,7 +193,7 @@ if __name__ == "__main__":
     # is nothing meaningful to save.
     subnet = hou.node("/obj/NeRF_Import")
     if subnet is None:
-        print("[ERROR] /obj/NeRF_Import not found — camera import failed; skipping scene save.")
+        print("[ERROR] /obj/NeRF_Import not found -- camera import failed; skipping scene save.")
         sys.exit(1)
     existing_scene = subnet.node("Scene")
     if existing_scene:

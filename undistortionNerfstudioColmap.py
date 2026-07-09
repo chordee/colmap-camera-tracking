@@ -107,14 +107,14 @@ def undistort_process(json_path, output_dir, crop=False):
         # aperture in Houdini stay at their nominal physical values.
         new_w, new_h   = w, h
         new_cx, new_cy = cx, cy
-        print(f"Mode: crop  — canvas unchanged: {new_w} x {new_h}")
+        print(f"Mode: crop  -- canvas unchanged: {new_w} x {new_h}")
     else:
         # Expand the canvas so that every pixel from the distorted image is
         # visible after undistortion.  Focal length is preserved; cx/cy shift
         # to match the new canvas origin.
         _, _, new_w, new_h, new_cx, new_cy = compute_undistorted_canvas(w, h, K, D)
-        print(f"Mode: expand — canvas: {w} x {h}  →  {new_w} x {new_h},  "
-              f"cx: {cx:.2f} → {new_cx:.2f},  cy: {cy:.2f} → {new_cy:.2f}")
+        print(f"Mode: expand -- canvas: {w} x {h}  ->  {new_w} x {new_h},  "
+              f"cx: {cx:.2f} -> {new_cx:.2f},  cy: {cy:.2f} -> {new_cy:.2f}")
 
     new_K = np.array([
         [fl_x, 0,    new_cx],

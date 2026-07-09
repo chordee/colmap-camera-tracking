@@ -41,7 +41,7 @@ class PathPicker(QWidget):
         self.file_filter = file_filter
 
         self.edit = QLineEdit()
-        self.button = QPushButton("Browse…")
+        self.button = QPushButton("Browse...")
         self.button.clicked.connect(self._browse)
 
         layout = QHBoxLayout(self)
@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
         w = QWidget()
         form = QFormLayout(w)
 
-        self.acescg = QCheckBox("Convert ACEScg → sRGB before processing")
+        self.acescg = QCheckBox("Convert ACEScg -> sRGB before processing")
         form.addRow(self.acescg)
 
         self.lut = PathPicker(mode="file", file_filter="LUT (*.cube)")

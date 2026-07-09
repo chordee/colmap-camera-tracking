@@ -132,10 +132,10 @@ def extract_exr_sequence(exr_dir, img_dir, scale=1.0, acescg=False):
         return 0
 
     written = 0
-    for src in tqdm(exr_files, desc="        Converting EXR → JPG", unit="frame"):
+    for src in tqdm(exr_files, desc="        Converting EXR -> JPG", unit="frame"):
         img = cv2.imread(src, cv2.IMREAD_UNCHANGED)
         if img is None:
-            print(f"        [WARN] Could not read EXR: {os.path.basename(src)} — skipping.")
+            print(f"        [WARN] Could not read EXR: {os.path.basename(src)} -- skipping.")
             continue
 
         out = _linear_to_srgb_u8(img, acescg=acescg)
@@ -170,7 +170,7 @@ def extract_jpg_sequence(jpg_dir, img_dir, scale=1.0):
         else:
             img = cv2.imread(src)
             if img is None:
-                print(f"        [WARN] Could not read JPG: {os.path.basename(src)} — skipping.")
+                print(f"        [WARN] Could not read JPG: {os.path.basename(src)} -- skipping.")
                 written -= 1
                 continue
             out = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
@@ -214,10 +214,10 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
     # a bare scene folder without that marker means a previous run failed midway.
     completion_marker = os.path.join(sparse_dir, "0", "cameras.bin")
     if os.path.exists(completion_marker):
-        print(f"        • Skipping \"{base_name}\" – already reconstructed.")
+        print(f"        * Skipping \"{base_name}\" - already reconstructed.")
         return
     if os.path.exists(scene_path):
-        print(f"        [WARN] Skipping \"{base_name}\" – folder exists but reconstruction is incomplete.")
+        print(f"        [WARN] Skipping \"{base_name}\" - folder exists but reconstruction is incomplete.")
         print(f"               Delete \"{scene_path}\" to retry.")
         return
 
@@ -251,7 +251,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
 
     # 3. Format check and fix
     if final_mask_path:
-        print(f"        • Mask directory: {final_mask_path}")
+        print(f"        * Mask directory: {final_mask_path}")
         # Check for *.jpg.png
         has_jpg_png = glob.glob(os.path.join(final_mask_path, "*.jpg.png"))
         
@@ -259,7 +259,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         if not has_jpg_png:
             pngs = glob.glob(os.path.join(final_mask_path, "*.png"))
             if pngs:
-                print(f"        • Formatting mask filenames (adding .jpg extension)...")
+                print(f"        * Formatting mask filenames (adding .jpg extension)...")
                 renamed_count = 0
                 for p in pngs:
                     if p.lower().endswith(".jpg.png"): 
@@ -278,23 +278,23 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
                 print(f"          [WARN] Mask directory exists but contains no .png files. Ignoring.")
                 final_mask_path = None
 
-    # 1) Produce frame_%06d.jpg in img_dir — from an EXR sequence, a JPG
+    # 1) Produce frame_%06d.jpg in img_dir -- from an EXR sequence, a JPG
     #    sequence (both cv2), or a video (FFmpeg).
     if seq_kind == "exr":
-        print("        [1/4] Converting EXR sequence → JPG ...")
+        print("        [1/4] Converting EXR sequence -> JPG ...")
         if acescg:
-            print("        • ACEScg (AP1) → sRGB colour conversion enabled.")
+            print("        * ACEScg (AP1) -> sRGB colour conversion enabled.")
         if lut_path:
             print("        [WARN] --lut is FFmpeg-only and ignored for EXR input.")
         if extract_exr_sequence(source_path, img_dir, scale=scale, acescg=acescg) == 0:
-            print(f"        × No EXR frames converted – skipping \"{base_name}\".")
+            print(f"        x No EXR frames converted - skipping \"{base_name}\".")
             return
     elif seq_kind == "jpg":
         print("        [1/4] Preparing JPG sequence ...")
         if acescg or lut_path:
             print("        [WARN] --acescg / --lut do not apply to JPG sequences and are ignored.")
         if extract_jpg_sequence(source_path, img_dir, scale=scale) == 0:
-            print(f"        × No JPG frames prepared – skipping \"{base_name}\".")
+            print(f"        x No JPG frames prepared - skipping \"{base_name}\".")
             return
     else:
         print("        [1/4] Extracting frames ...")
@@ -328,13 +328,13 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
 
         cmd_ffmpeg.append(frame_pattern)
 
-        if not run_command(cmd_ffmpeg, f"        × FFmpeg failed – skipping \"{base_name}\"."):
+        if not run_command(cmd_ffmpeg, f"        x FFmpeg failed - skipping \"{base_name}\"."):
             return
 
     # Check if frames were extracted
     all_images = glob.glob(os.path.join(img_dir, "*.jpg"))
     if not all_images:
-        print(f"        × No frames extracted – skipping \"{base_name}\".")
+        print(f"        x No frames extracted - skipping \"{base_name}\".")
         return
 
     # Compute pixel focal length (used for EXIF, camera_params, and post-BA patching)
@@ -376,7 +376,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         #   SIMPLE_RADIAL          (f, cx, cy, k)
         #   RADIAL                 (f, cx, cy, k1, k2)
         #   SIMPLE_RADIAL_FISHEYE  (f, cx, cy, k)
-        #   OPENCV / OPENCV_FISHEYE and friends — 8 params (fx, fy, cx, cy, d0..d3)
+        #   OPENCV / OPENCV_FISHEYE and friends -- 8 params (fx, fy, cx, cy, d0..d3)
         if model_upper == "SIMPLE_PINHOLE":
             params_str = f"{fl_px},{cx},{cy}"
         elif model_upper == "PINHOLE":
@@ -391,7 +391,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
             # OPENCV, OPENCV_FISHEYE, and others default to 8-param format
             params_str = f"{fl_px},{fl_px},{cx},{cy},0,0,0,0"
 
-        print(f"        • Focal length: {focal_length_mm}mm / {sensor_width_mm}mm sensor → {fl_px:.1f}px  (camera_params: {params_str})")
+        print(f"        * Focal length: {focal_length_mm}mm / {sensor_width_mm}mm sensor -> {fl_px:.1f}px  (camera_params: {params_str})")
 
         if not camera_model:
             camera_model = "OPENCV"
@@ -438,7 +438,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         for k, v in extra_fe.items():
             cmd_colmap_fe.extend([f"--{k}", str(v)])
 
-    if not run_command(cmd_colmap_fe, f"        × feature_extractor failed – skipping \"{base_name}\"."):
+    if not run_command(cmd_colmap_fe, f"        x feature_extractor failed - skipping \"{base_name}\"."):
         return
 
     # 3) Sequential matching (COLMAP)
@@ -462,7 +462,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         for k, v in extra_sm.items():
             cmd_colmap_sm.extend([f"--{k}", str(v)])
 
-    if not run_command(cmd_colmap_sm, f"        × sequential_matcher failed – skipping \"{base_name}\"."):
+    if not run_command(cmd_colmap_sm, f"        x sequential_matcher failed - skipping \"{base_name}\"."):
         return
 
     # 4) Sparse reconstruction
@@ -473,7 +473,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         "--image_path", img_dir,
         "--output_path", sparse_dir
     ]
-    fail_msg = f"        × colmap global_mapper failed – skipping \"{base_name}\"."
+    fail_msg = f"        x colmap global_mapper failed - skipping \"{base_name}\"."
 
     # Inject extra mapper args
     if extra_ma:
@@ -493,7 +493,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         if os.path.exists(cameras_bin):
             try:
                 _patch_cameras_bin_focal_length(cameras_bin, fl_px)
-                print(f"        • Patched cameras.bin → focal length reset to {fl_px:.1f}px")
+                print(f"        * Patched cameras.bin -> focal length reset to {fl_px:.1f}px")
             except Exception as e:
                 print(f"        [WARN] Could not patch cameras.bin: {e}")
             else:
@@ -504,10 +504,10 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
                     "--output_path", sparse_0_dir_ba,
                     "--BundleAdjustment.refine_focal_length", "0",
                 ]
-                if not run_command(cmd_ba, "        [WARN] bundle_adjuster (fixed focal) failed — continuing without re-BA"):
+                if not run_command(cmd_ba, "        [WARN] bundle_adjuster (fixed focal) failed -- continuing without re-BA"):
                     pass  # Non-fatal: TXT export still proceeds with patched cameras.bin
         else:
-            print(f"        [WARN] cameras.bin not found at {cameras_bin} — skipping focal length patch.")
+            print(f"        [WARN] cameras.bin not found at {cameras_bin} -- skipping focal length patch.")
 
     # Export TXT inside the model folder
     # Keep TXT next to BIN so Blender can import from sparse\0 directly.
@@ -530,7 +530,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
         ]
         run_command(cmd_convert_2, "        [WARN] Failed to export TXT to sparse/", quiet=True)
 
-    print(f"        ✓ Finished \"{base_name}\"  ({idx}/{total})")
+    print(f"        [OK] Finished \"{base_name}\"  ({idx}/{total})")
 
 def main():
     parser = argparse.ArgumentParser(description="Batch script for automated photogrammetry tracking workflow.")
@@ -580,10 +580,10 @@ def main():
 
     # Discover inputs:
     #   - top-level video files
-    #   - subfolders that hold an image sequence — EXR or JPG (one subfolder = one scene)
+    #   - subfolders that hold an image sequence -- EXR or JPG (one subfolder = one scene)
     #   - or, if the input directory itself holds loose sequence frames, the whole
     #     directory is treated as a single sequence (scene = its own name)
-    # "*_mask" folders are skipped — they hold PNG masks, not source frames.
+    # "*_mask" folders are skipped -- they hold PNG masks, not source frames.
     entries = sorted(os.listdir(videos_dir))
     video_files = [
         os.path.join(videos_dir, f) for f in entries
@@ -600,7 +600,7 @@ def main():
     if _sequence_kind(videos_dir):
         if seq_dirs:
             print("[WARN] Found loose sequence frames AND sequence subfolders in the "
-                  "input directory. Both will be processed as separate scenes — move "
+                  "input directory. Both will be processed as separate scenes -- move "
                   "the loose frames into their own subfolder if that's not intended.")
         seq_dirs.insert(0, videos_dir)
 
@@ -620,7 +620,7 @@ def main():
         if os.path.isfile(extra_input):
             try:
                 with open(extra_input, 'r') as f:
-                    print(f"        • Loading extra arguments from: {extra_input}")
+                    print(f"        * Loading extra arguments from: {extra_input}")
                     return json.load(f)
             except Exception as e:
                 print(f"        [WARN] Failed to read JSON file {extra_input}: {e}")
@@ -667,7 +667,7 @@ def main():
         )
 
     print("--------------------------------------------------------------")
-    print(f" All jobs finished – results are in \"{scenes_dir}\".")
+    print(f" All jobs finished - results are in \"{scenes_dir}\".")
     print("--------------------------------------------------------------")
 
 if __name__ == "__main__":
