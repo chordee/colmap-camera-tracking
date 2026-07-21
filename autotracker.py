@@ -87,6 +87,27 @@ def _patch_cameras_bin_focal_length(cameras_bin_path, fl_px):
         f.write(data)
 
 
+def build_camera_params_str(model_upper, fl_px, cx, cy):
+    """Build the COLMAP --ImageReader.camera_params string for a given camera
+    model, using fl_px as the pixel focal length and cx/cy as the principal
+    point. Distortion terms are seeded at 0 for bundle adjustment to refine."""
+    if model_upper == "SIMPLE_PINHOLE":
+        return f"{fl_px},{cx},{cy}"
+    elif model_upper == "PINHOLE":
+        return f"{fl_px},{fl_px},{cx},{cy}"
+    elif model_upper == "SIMPLE_RADIAL":
+        return f"{fl_px},{cx},{cy},0"
+    elif model_upper == "RADIAL":
+        return f"{fl_px},{cx},{cy},0,0"
+    elif model_upper == "SIMPLE_RADIAL_FISHEYE":
+        return f"{fl_px},{cx},{cy},0"
+    elif model_upper == "FULL_OPENCV":
+        return f"{fl_px},{fl_px},{cx},{cy},0,0,0,0,0,0,0,0"
+    else:
+        # OPENCV, OPENCV_FISHEYE, and others default to 8-param format
+        return f"{fl_px},{fl_px},{cx},{cy},0,0,0,0"
+
+
 def _linear_to_srgb_u8(img, acescg=False):
     """Convert a linear float EXR frame (BGR or BGRA) to an 8-bit sRGB BGR image.
 
@@ -370,26 +391,7 @@ def process_video(source_path, scenes_dir, idx, total, overlap=12, scale=1.0, ma
 
         model = camera_model or "OPENCV"
         model_upper = model.upper()
-        # COLMAP camera_params layouts:
-        #   SIMPLE_PINHOLE         (f, cx, cy)
-        #   PINHOLE                (fx, fy, cx, cy)
-        #   SIMPLE_RADIAL          (f, cx, cy, k)
-        #   RADIAL                 (f, cx, cy, k1, k2)
-        #   SIMPLE_RADIAL_FISHEYE  (f, cx, cy, k)
-        #   OPENCV / OPENCV_FISHEYE and friends -- 8 params (fx, fy, cx, cy, d0..d3)
-        if model_upper == "SIMPLE_PINHOLE":
-            params_str = f"{fl_px},{cx},{cy}"
-        elif model_upper == "PINHOLE":
-            params_str = f"{fl_px},{fl_px},{cx},{cy}"
-        elif model_upper == "SIMPLE_RADIAL":
-            params_str = f"{fl_px},{cx},{cy},0"
-        elif model_upper == "RADIAL":
-            params_str = f"{fl_px},{cx},{cy},0,0"
-        elif model_upper == "SIMPLE_RADIAL_FISHEYE":
-            params_str = f"{fl_px},{cx},{cy},0"
-        else:
-            # OPENCV, OPENCV_FISHEYE, and others default to 8-param format
-            params_str = f"{fl_px},{fl_px},{cx},{cy},0,0,0,0"
+        params_str = build_camera_params_str(model_upper, fl_px, cx, cy)
 
         print(f"        * Focal length: {focal_length_mm}mm / {sensor_width_mm}mm sensor -> {fl_px:.1f}px  (camera_params: {params_str})")
 
