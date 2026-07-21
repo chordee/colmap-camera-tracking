@@ -31,6 +31,14 @@ from PySide6.QtWidgets import (
 SCRIPT_DIR = Path(__file__).resolve().parent
 RUN_AUTOTRACKER = SCRIPT_DIR / "run_autotracker.py"
 
+_KEEP_DISTORTION_ALLOWED_MODELS = {"OPENCV", "FULL_OPENCV"}
+
+
+def _keep_distortion_allowed(camera_model_text):
+    """Whether --keep-distortion is valid for the given Camera model dropdown
+    text. Matches run_autotracker.KEEP_DISTORTION_ALLOWED_MODELS."""
+    return camera_model_text in _KEEP_DISTORTION_ALLOWED_MODELS
+
 
 class PathPicker(QWidget):
     """Line edit + browse button for selecting a file or directory."""
@@ -127,10 +135,21 @@ class MainWindow(QMainWindow):
             "SIMPLE_RADIAL",
             "RADIAL",
             "OPENCV",
+            "FULL_OPENCV",
             "OPENCV_FISHEYE",
         ])
         self.camera_model.setCurrentText("SIMPLE_RADIAL")
         form.addRow("Camera model:", self.camera_model)
+
+        self.keep_distortion = QCheckBox("Keep distortion (skip rectification, pass OpenCV params to Houdini)")
+        self.keep_distortion.setEnabled(_keep_distortion_allowed(self.camera_model.currentText()))
+        form.addRow(self.keep_distortion)
+        self.camera_model.currentTextChanged.connect(
+            lambda text: self.keep_distortion.setEnabled(_keep_distortion_allowed(text))
+        )
+        self.camera_model.currentTextChanged.connect(
+            lambda text: self.keep_distortion.setChecked(False) if not _keep_distortion_allowed(text) else None
+        )
 
         return w
 
@@ -272,6 +291,9 @@ class MainWindow(QMainWindow):
 
         if self.camera_model.currentText() != "(auto)":
             cmd += ["--camera_model", self.camera_model.currentText()]
+
+        if self.keep_distortion.isChecked():
+            cmd.append("--keep-distortion")
 
         if self.focal_length_mm.value() > 0:
             cmd += ["--focal_length_mm", f"{self.focal_length_mm.value():.4f}"]
