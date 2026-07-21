@@ -8,6 +8,16 @@ import sys
 _DISTORTION_KEYS = ("k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2")
 
 
+def _has_meaningful_distortion(camera_model, data):
+    """Whether `data` carries a camera_model plus at least one non-zero
+    OpenCV distortion coefficient -- i.e. whether the source JSON is a
+    --keep-distortion pass-through (real calibrated values) rather than a
+    rectified scene (present but zeroed values) or older/missing-field JSON."""
+    if not camera_model:
+        return False
+    return any(float(data.get(key, 0.0)) != 0.0 for key in _DISTORTION_KEYS)
+
+
 def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
     """Add a read-only 'OpenCV Distortion' spare-parameter folder to `cam`
     when the JSON carries a camera_model and OpenCV distortion coefficients
@@ -16,7 +26,7 @@ def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
     kma_physicallens node. No-op when the fields aren't present (rectified
     JSON, or JSON produced before this field existed)."""
     camera_model = data.get("camera_model")
-    if not camera_model or not any(float(data.get(key, 0.0)) != 0.0 for key in _DISTORTION_KEYS):
+    if not _has_meaningful_distortion(camera_model, data):
         return
 
     folder_parms = [
