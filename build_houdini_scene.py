@@ -29,6 +29,14 @@ def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
     if not _has_meaningful_distortion(camera_model, data):
         return
 
+    # Houdini's DisableWhen conditional only actually disables a parm when
+    # the expression references another parm by name; a self-contained
+    # constant like "{ 1 == 1 }" is accepted without error but is silently
+    # ignored (Parm.isDisabled() still reports False). A hidden toggle parm,
+    # always on, referenced by name gives a genuinely read-only parm.
+    lock_gate = hou.ToggleParmTemplate("cv_lock", "Lock", default_value=True)
+    lock_gate.hide(True)
+
     folder_parms = [
         hou.StringParmTemplate("cv_camera_model", "Camera Model", 1, default_value=(camera_model,)),
         hou.FloatParmTemplate("cv_fx", "fx (px)", 1, default_value=(fl_x,)),
@@ -41,10 +49,10 @@ def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
             hou.FloatParmTemplate(f"cv_{key}", key, 1, default_value=(float(data.get(key, 0.0)),))
         )
     for pt in folder_parms:
-        pt.setConditional(hou.parmCondType.DisableWhen, "{ 1 == 1 }")
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ cv_lock == 1 }")
 
     folder = hou.FolderParmTemplate(
-        "opencv_distortion_folder", "OpenCV Distortion", folder_parms,
+        "opencv_distortion_folder", "OpenCV Distortion", [lock_gate] + folder_parms,
         folder_type=hou.folderType.Simple,
     )
 
