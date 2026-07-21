@@ -5,6 +5,44 @@ import os
 import re
 import sys
 
+_DISTORTION_KEYS = ("k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2")
+
+
+def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
+    """Add a read-only 'OpenCV Distortion' spare-parameter folder to `cam`
+    when the JSON carries a camera_model and OpenCV distortion coefficients
+    (written by the --keep-distortion path). No lens shader or VOP network
+    is created -- these values are for the user to copy into their own
+    kma_physicallens node. No-op when the fields aren't present (rectified
+    JSON, or JSON produced before this field existed)."""
+    camera_model = data.get("camera_model")
+    if not camera_model or not any(key in data for key in _DISTORTION_KEYS):
+        return
+
+    folder_parms = [
+        hou.StringParmTemplate("cv_camera_model", "Camera Model", 1, default_value=(camera_model,)),
+        hou.FloatParmTemplate("cv_fx", "fx (px)", 1, default_value=(fl_x,)),
+        hou.FloatParmTemplate("cv_fy", "fy (px)", 1, default_value=(fl_y,)),
+        hou.FloatParmTemplate("cv_cx", "cx (px)", 1, default_value=(cx,)),
+        hou.FloatParmTemplate("cv_cy", "cy (px)", 1, default_value=(cy,)),
+    ]
+    for key in _DISTORTION_KEYS:
+        folder_parms.append(
+            hou.FloatParmTemplate(f"cv_{key}", key, 1, default_value=(float(data.get(key, 0.0)),))
+        )
+    for pt in folder_parms:
+        pt.setConditional(hou.parmCondType.DisableWhen, "{ 1 == 1 }")
+
+    folder = hou.FolderParmTemplate(
+        "opencv_distortion_folder", "OpenCV Distortion", folder_parms,
+        folder_type=hou.folderType.Simple,
+    )
+
+    group = cam.parmTemplateGroup()
+    group.append(folder)
+    cam.setParmTemplateGroup(group)
+
+
 def create_animated_camera(json_path, aperture_width=36.0):
     cam_name = "Nerfstudio_Animated_Cam"
 
@@ -17,31 +55,40 @@ def create_animated_camera(json_path, aperture_width=36.0):
     with open(json_path, 'r') as f:
         data = json.load(f)
 
-    # Construct path to background image sequence from json path
     json_dir = os.path.dirname(json_path)
-    images_undistorted_dir = os.path.abspath(os.path.join(json_dir, "images_undistorted"))
-    # Houdini uses forward slashes
-    background_image_path = os.path.join(images_undistorted_dir, "frame_$F6.jpg").replace(os.sep, '/')
 
     # 2. Get basic information
     frames = data.get("frames", [])
-    
+
     # Sort by number in filename (ensure correct animation order)
     def get_frame_num(frame_data):
         fname = os.path.basename(frame_data['file_path'])
         match = re.search(r'(\d+)', fname)
         return int(match.group(1)) if match else 0
-    
+
     frames.sort(key=get_frame_num)
 
     if not frames:
         print("No frames found in JSON.")
         return
 
+    # Background image sequence path, derived from the first frame's own
+    # file_path rather than a hardcoded folder name -- this works whether
+    # frames point into images_undistorted/ (rectify path) or back to the
+    # original images/ folder (--keep-distortion path).
+    first_frame_path = frames[0]["file_path"]
+    frame_dir = os.path.dirname(first_frame_path)
+    frame_name = os.path.basename(first_frame_path)
+    frame_pattern = re.sub(r'\d+', '$F6', frame_name, count=1)
+    background_image_path = os.path.abspath(
+        os.path.join(json_dir, frame_dir, frame_pattern)
+    ).replace(os.sep, '/')
+
     # Read resolution and focal length
     img_w = float(data.get("w", 1920))
     img_h = float(data.get("h", 1080))
     fl_x  = float(data.get("fl_x", 1000))  # Focal length in pixels
+    fl_y  = float(data.get("fl_y", fl_x))
     cx    = float(data.get("cx", img_w / 2))
     cy    = float(data.get("cy", img_h / 2))
 
@@ -110,6 +157,7 @@ def create_animated_camera(json_path, aperture_width=36.0):
     cam.parm("focal").set(focal_mm)
     cam.parm("winx").set(winx)
     cam.parm("winy").set(winy)
+    _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy)
     cam.parm("iconscale").set(0.5)
 
     # Set background image for viewport
