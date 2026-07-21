@@ -190,6 +190,91 @@ def closest_point_2_lines(oa, da, ob, db): # returns point closest to both rays 
 		tb = 0
 	return (oa+ta*da+ob+tb*db) * 0.5, denom
 
+def parse_camera_line(els):
+	"""Parse one non-comment, whitespace-split line of COLMAP's cameras.txt
+	(e.g. "1 OPENCV 3840 2160 ...".split(" ")) into a camera dict."""
+	camera = {}
+	camera["w"] = float(els[2])
+	camera["h"] = float(els[3])
+	camera["fl_x"] = float(els[4])
+	camera["fl_y"] = float(els[4])
+	camera["k1"] = 0
+	camera["k2"] = 0
+	camera["k3"] = 0
+	camera["k4"] = 0
+	camera["k5"] = 0
+	camera["k6"] = 0
+	camera["p1"] = 0
+	camera["p2"] = 0
+	camera["cx"] = camera["w"] / 2
+	camera["cy"] = camera["h"] / 2
+	camera["is_fisheye"] = False
+	camera["camera_model"] = els[1]
+	if els[1] == "SIMPLE_PINHOLE":
+		camera["cx"] = float(els[5])
+		camera["cy"] = float(els[6])
+	elif els[1] == "PINHOLE":
+		camera["fl_y"] = float(els[5])
+		camera["cx"] = float(els[6])
+		camera["cy"] = float(els[7])
+	elif els[1] == "SIMPLE_RADIAL":
+		camera["cx"] = float(els[5])
+		camera["cy"] = float(els[6])
+		camera["k1"] = float(els[7])
+	elif els[1] == "RADIAL":
+		camera["cx"] = float(els[5])
+		camera["cy"] = float(els[6])
+		camera["k1"] = float(els[7])
+		camera["k2"] = float(els[8])
+	elif els[1] == "OPENCV":
+		camera["fl_y"] = float(els[5])
+		camera["cx"] = float(els[6])
+		camera["cy"] = float(els[7])
+		camera["k1"] = float(els[8])
+		camera["k2"] = float(els[9])
+		camera["p1"] = float(els[10])
+		camera["p2"] = float(els[11])
+	elif els[1] == "FULL_OPENCV":
+		camera["fl_y"] = float(els[5])
+		camera["cx"] = float(els[6])
+		camera["cy"] = float(els[7])
+		camera["k1"] = float(els[8])
+		camera["k2"] = float(els[9])
+		camera["p1"] = float(els[10])
+		camera["p2"] = float(els[11])
+		camera["k3"] = float(els[12])
+		camera["k4"] = float(els[13])
+		camera["k5"] = float(els[14])
+		camera["k6"] = float(els[15])
+	elif els[1] == "SIMPLE_RADIAL_FISHEYE":
+		camera["is_fisheye"] = True
+		camera["cx"] = float(els[5])
+		camera["cy"] = float(els[6])
+		camera["k1"] = float(els[7])
+	elif els[1] == "RADIAL_FISHEYE":
+		camera["is_fisheye"] = True
+		camera["cx"] = float(els[5])
+		camera["cy"] = float(els[6])
+		camera["k1"] = float(els[7])
+		camera["k2"] = float(els[8])
+	elif els[1] == "OPENCV_FISHEYE":
+		camera["is_fisheye"] = True
+		camera["fl_y"] = float(els[5])
+		camera["cx"] = float(els[6])
+		camera["cy"] = float(els[7])
+		camera["k1"] = float(els[8])
+		camera["k2"] = float(els[9])
+		camera["k3"] = float(els[10])
+		camera["k4"] = float(els[11])
+	else:
+		print("Unknown camera model ", els[1])
+	# fl = 0.5 * w / tan(0.5 * angle_x);
+	camera["camera_angle_x"] = math.atan(camera["w"] / (camera["fl_x"] * 2)) * 2
+	camera["camera_angle_y"] = math.atan(camera["h"] / (camera["fl_y"] * 2)) * 2
+	camera["fovx"] = camera["camera_angle_x"] * 180 / math.pi
+	camera["fovy"] = camera["camera_angle_y"] * 180 / math.pi
+	return camera
+
 if __name__ == "__main__":
 	args = parse_args()
 	if args.video_in != "":
@@ -212,7 +297,6 @@ if __name__ == "__main__":
 	print(f"outputting to {OUT_PATH}...")
 	cameras = {}
 	with open(os.path.join(TEXT_FOLDER,"cameras.txt"), "r") as f:
-		camera_angle_x = math.pi / 2
 		for line in f:
 			# 1 SIMPLE_RADIAL 2048 1536 1580.46 1024 768 0.0045691
 			# 1 OPENCV 3840 2160 3178.27 3182.09 1920 1080 0.159668 -0.231286 -0.00123982 0.00272224
@@ -220,73 +304,8 @@ if __name__ == "__main__":
 			if line[0] == "#":
 				continue
 			els = line.split(" ")
-			camera = {}
 			camera_id = int(els[0])
-			camera["w"] = float(els[2])
-			camera["h"] = float(els[3])
-			camera["fl_x"] = float(els[4])
-			camera["fl_y"] = float(els[4])
-			camera["k1"] = 0
-			camera["k2"] = 0
-			camera["k3"] = 0
-			camera["k4"] = 0
-			camera["p1"] = 0
-			camera["p2"] = 0
-			camera["cx"] = camera["w"] / 2
-			camera["cy"] = camera["h"] / 2
-			camera["is_fisheye"] = False
-			if els[1] == "SIMPLE_PINHOLE":
-				camera["cx"] = float(els[5])
-				camera["cy"] = float(els[6])
-			elif els[1] == "PINHOLE":
-				camera["fl_y"] = float(els[5])
-				camera["cx"] = float(els[6])
-				camera["cy"] = float(els[7])
-			elif els[1] == "SIMPLE_RADIAL":
-				camera["cx"] = float(els[5])
-				camera["cy"] = float(els[6])
-				camera["k1"] = float(els[7])
-			elif els[1] == "RADIAL":
-				camera["cx"] = float(els[5])
-				camera["cy"] = float(els[6])
-				camera["k1"] = float(els[7])
-				camera["k2"] = float(els[8])
-			elif els[1] == "OPENCV":
-				camera["fl_y"] = float(els[5])
-				camera["cx"] = float(els[6])
-				camera["cy"] = float(els[7])
-				camera["k1"] = float(els[8])
-				camera["k2"] = float(els[9])
-				camera["p1"] = float(els[10])
-				camera["p2"] = float(els[11])
-			elif els[1] == "SIMPLE_RADIAL_FISHEYE":
-				camera["is_fisheye"] = True
-				camera["cx"] = float(els[5])
-				camera["cy"] = float(els[6])
-				camera["k1"] = float(els[7])
-			elif els[1] == "RADIAL_FISHEYE":
-				camera["is_fisheye"] = True
-				camera["cx"] = float(els[5])
-				camera["cy"] = float(els[6])
-				camera["k1"] = float(els[7])
-				camera["k2"] = float(els[8])
-			elif els[1] == "OPENCV_FISHEYE":
-				camera["is_fisheye"] = True
-				camera["fl_y"] = float(els[5])
-				camera["cx"] = float(els[6])
-				camera["cy"] = float(els[7])
-				camera["k1"] = float(els[8])
-				camera["k2"] = float(els[9])
-				camera["k3"] = float(els[10])
-				camera["k4"] = float(els[11])
-			else:
-				print("Unknown camera model ", els[1])
-			# fl = 0.5 * w / tan(0.5 * angle_x);
-			camera["camera_angle_x"] = math.atan(camera["w"] / (camera["fl_x"] * 2)) * 2
-			camera["camera_angle_y"] = math.atan(camera["h"] / (camera["fl_y"] * 2)) * 2
-			camera["fovx"] = camera["camera_angle_x"] * 180 / math.pi
-			camera["fovy"] = camera["camera_angle_y"] * 180 / math.pi
-
+			camera = parse_camera_line(els)
 			print(f"camera {camera_id}:\n\tres={camera['w'],camera['h']}\n\tcenter={camera['cx'],camera['cy']}\n\tfocal={camera['fl_x'],camera['fl_y']}\n\tfov={camera['fovx'],camera['fovy']}\n\tk={camera['k1'],camera['k2']} p={camera['p1'],camera['p2']} ")
 			cameras[camera_id] = camera
 
@@ -308,9 +327,12 @@ if __name__ == "__main__":
 				"k2": camera["k2"],
 				"k3": camera["k3"],
 				"k4": camera["k4"],
+				"k5": camera["k5"],
+				"k6": camera["k6"],
 				"p1": camera["p1"],
 				"p2": camera["p2"],
 				"is_fisheye": camera["is_fisheye"],
+				"camera_model": camera["camera_model"],
 				"cx": camera["cx"],
 				"cy": camera["cy"],
 				"w": camera["w"],
