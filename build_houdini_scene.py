@@ -16,7 +16,7 @@ def _add_distortion_reference_parms(cam, data, fl_x, fl_y, cx, cy):
     kma_physicallens node. No-op when the fields aren't present (rectified
     JSON, or JSON produced before this field existed)."""
     camera_model = data.get("camera_model")
-    if not camera_model or not any(key in data for key in _DISTORTION_KEYS):
+    if not camera_model or not any(float(data.get(key, 0.0)) != 0.0 for key in _DISTORTION_KEYS):
         return
 
     folder_parms = [
