@@ -2,9 +2,78 @@ import json
 import cv2
 import numpy as np
 import os
+import sys
 import math
 from pathlib import Path
 import argparse
+
+
+KEEP_DISTORTION_ALLOWED_MODELS = {"OPENCV", "FULL_OPENCV"}
+
+
+def validate_keep_distortion_model(camera_model):
+    """Raise ValueError if camera_model's distortion formula doesn't match
+    Houdini's kma_physicallens OpenCV section (Brown-Conrady radial/tangential,
+    not the angle-based fisheye/equidistant formula)."""
+    if camera_model not in KEEP_DISTORTION_ALLOWED_MODELS:
+        raise ValueError(
+            f"--keep-distortion requires camera_model to be one of "
+            f"{sorted(KEEP_DISTORTION_ALLOWED_MODELS)}; got {camera_model!r}. "
+            "Fisheye models use an angle-based distortion formula that does not "
+            "match Houdini's kma_physicallens OpenCV section, which implements "
+            "the Brown-Conrady radial/tangential model."
+        )
+
+
+def build_keep_distortion_json(data, json_dir, output_dir):
+    """Build the pass-through JSON for --keep-distortion mode: same intrinsics
+    and distortion coefficients as the source JSON, with frames[].file_path
+    rewritten to be relative to output_dir instead of json_dir. No image data
+    is read or written -- the original frames are referenced in place."""
+    new_data = data.copy()
+    new_frames = []
+    for frame in data.get("frames", []):
+        rel_path = frame["file_path"]
+        abs_path = (Path(json_dir) / rel_path).resolve()
+        new_rel_path = os.path.relpath(abs_path, output_dir).replace(os.sep, '/')
+        new_frame = frame.copy()
+        new_frame["file_path"] = new_rel_path
+        new_frames.append(new_frame)
+    new_data["frames"] = new_frames
+    return new_data
+
+
+def keep_distortion_process(json_path, output_dir):
+    if not os.path.exists(json_path):
+        print(f"Error: JSON file not found: {json_path}")
+        sys.exit(1)
+
+    print(f"Reading JSON: {json_path}")
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+
+    camera_model = data.get("camera_model")
+    try:
+        validate_keep_distortion_model(camera_model)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    json_dir = Path(json_path).parent
+
+    new_data = build_keep_distortion_json(data, json_dir, output_path)
+
+    new_json_path = output_path / "transforms_original.json"
+    with open(new_json_path, 'w') as f:
+        json.dump(new_data, f, indent=4)
+
+    print("Done! Distortion coefficients preserved -- images were not rectified.")
+    print(f"Original images referenced from : {json_dir}")
+    print(f"New JSON saved to                : {new_json_path}")
+    print("Use this new JSON in Houdini -- the camera node's distortion spare "
+          "parameters can be copied into a kma_physicallens VOP.")
 
 
 def compute_undistorted_canvas(w, h, K, D, n_samples=50):
@@ -201,5 +270,13 @@ if __name__ == "__main__":
                              "nominal physical values (e.g. 20 mm / 36 mm).  "
                              "Corner pixels that fall outside the distorted image "
                              "will appear black.")
+    parser.add_argument("--keep-distortion", dest="keep_distortion", action="store_true",
+                        help="Skip rectification entirely and pass the original "
+                             "distorted images plus OpenCV distortion coefficients "
+                             "through to Houdini instead. Only valid for camera_model "
+                             "OPENCV or FULL_OPENCV.")
     args = parser.parse_args()
-    undistort_process(args.original_json, args.output_dir, crop=args.crop)
+    if args.keep_distortion:
+        keep_distortion_process(args.original_json, args.output_dir)
+    else:
+        undistort_process(args.original_json, args.output_dir, crop=args.crop)
