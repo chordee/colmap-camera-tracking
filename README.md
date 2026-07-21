@@ -9,7 +9,7 @@ Automated pipeline for camera tracking and scene reconstruction using COLMAP and
 - **Feature Extraction & Matching:** Utilises COLMAP for feature extraction and sequential matching.
 - **Sparse Reconstruction:** Uses **COLMAP Global Mapper** (requires COLMAP 4.0+).
 - **NeRF Conversion:** Converts COLMAP data to `transforms.json` (NeRF format).
-- **Undistortion:** Expands the undistorted canvas to preserve all valid pixels while keeping the focal length unchanged. Optionally crops to the original canvas size (`--crop`).
+- **Undistortion:** Expands the undistorted canvas to preserve all valid pixels while keeping the focal length unchanged. Optionally crops to the original canvas size (`--crop`). For `OPENCV`/`FULL_OPENCV` scenes, `--keep-distortion` can skip rectification entirely and hand the original distorted frames plus the raw distortion coefficients to Houdini instead (see [OpenCV Distortion Passthrough](#opencv-distortion-passthrough)).
 - **Houdini Integration:** Automatically generates a Houdini `.hip` scene with the reconstructed point cloud and animated camera. Converts COLMAP/OpenCV coordinates to Houdini's Y-up world, and correctly handles sensor size, canvas expansion, and principal-point offset.
 
 ## Prerequisites
@@ -93,8 +93,9 @@ A **Copy Command** button builds the equivalent `run_autotracker.py` invocation 
 | `--mask` | — | Path to a directory containing per-frame masks |
 | `--focal_length_mm` | — | Lens focal length in mm (e.g. `24`). Locks COLMAP to this value instead of estimating it. |
 | `--sensor_width_mm` | `36.0` | Physical sensor width in mm. Used together with `--focal_length_mm`. Common values: full-frame=36.0, ARRI LF=36.7, Super35=24.89, MFT=17.3 |
-| `--crop` | off | Keep original canvas size during undistortion instead of expanding it. Houdini focal length and aperture remain at exact physical values (e.g. 20 mm / 36 mm). |
-| `--camera_model` | `SIMPLE_RADIAL` | COLMAP camera model (e.g. `OPENCV`, `PINHOLE`, `SIMPLE_RADIAL`) |
+| `--crop` | off | Keep original canvas size during undistortion instead of expanding it. Houdini focal length and aperture remain at exact physical values (e.g. 20 mm / 36 mm). Ignored when `--keep-distortion` is set. |
+| `--camera_model` | `SIMPLE_RADIAL` | COLMAP camera model (`SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`, `OPENCV`, `FULL_OPENCV`, `OPENCV_FISHEYE`, …) |
+| `--keep-distortion` | off | Skip rectification and pass the original distorted frames plus OpenCV distortion coefficients through to Houdini instead. Only valid with `--camera_model OPENCV` or `FULL_OPENCV` — any other model is a hard error. See [OpenCV Distortion Passthrough](#opencv-distortion-passthrough). |
 | `--loop` | off | Enable loop detection in sequential matching |
 | `--loop_period` | `5` | Loop detection period |
 | `--loop_num_images` | `50` | Number of images considered per loop detection pass |
@@ -137,6 +138,14 @@ The pipeline supports per-frame masks to exclude moving objects or unwanted regi
    - Loose sequence frames passed as `<input_dir>` → `<input_dir>_mask/` at the parent level.
 2. **Custom root:** `--mask <path>` looks for `<scene>_mask` inside the specified path.
 3. **Filename format:** PNG files named `frame_000001.jpg.png`. If `frame_000001.png` is found it is automatically renamed to match COLMAP requirements.
+
+### OpenCV Distortion Passthrough
+
+By default the pipeline rectifies (undistorts) every frame before handing it to Houdini, which assumes a plain pinhole camera downstream. For `--camera_model OPENCV` or `FULL_OPENCV`, `--keep-distortion` skips that rectification pass instead: the original distorted frames are used as-is, and the calibrated distortion coefficients (`k1`–`k6`, `p1`, `p2`) are preserved and exposed as a read-only "OpenCV Distortion" parameter folder on the generated Houdini camera. Copy those values into a [Karma Physical Lens (`kma_physicallens`)](https://www.sidefx.com/docs/houdini/nodes/vop/kma_physicallens.html) VOP's **OpenCV** section (with **Projection** set to Perspective) to reproduce the lens distortion at render time instead of via a pre-rectified plate.
+
+**Why only `OPENCV`/`FULL_OPENCV`:** `kma_physicallens`'s OpenCV section implements the same Brown-Conrady radial/tangential formula as COLMAP's `OPENCV`/`FULL_OPENCV` models. COLMAP's fisheye models (`OPENCV_FISHEYE`, `SIMPLE_RADIAL_FISHEYE`, `RADIAL_FISHEYE`) use a different, angle-based (equidistant) formula that doesn't match — `--keep-distortion` with a fisheye model is rejected with a non-zero exit code rather than producing a silently-wrong result.
+
+No lens shader is created automatically — the spare parameters are for manual reference only.
 
 ### Example
 
@@ -242,6 +251,7 @@ Processes `./demo-test/walking-forest` and outputs to `./demo-test/walking-fores
 6. **Undistortion** — `undistortionNerfstudioColmap.py` removes lens distortion.
    - Default: canvas is expanded to include all valid pixels; `sensor_w`/`sensor_h` are recorded so downstream tools can recover the physical focal length.
    - `--crop`: keeps the original canvas size; Houdini focal length and aperture remain at their exact physical values (e.g. 20 mm / 36 mm).
+   - `--keep-distortion` (`OPENCV`/`FULL_OPENCV` only): skips rectification entirely; the original distorted frames and raw distortion coefficients are passed through instead (see [OpenCV Distortion Passthrough](#opencv-distortion-passthrough)).
 7. **Houdini scene** — `build_houdini_scene.py` imports the point cloud and creates an animated camera with correct focal length, aperture, and principal-point offset. Both the camera and point cloud are converted from COLMAP/OpenCV space to Houdini's Y-up world via an `Rx(180)` rotation (flip Y and Z), so the scene appears upright and un-mirrored.
 
 ## Scripts Overview
@@ -251,7 +261,7 @@ Processes `./demo-test/walking-forest` and outputs to `./demo-test/walking-fores
 | `run_autotracker.py` | Master script — orchestrates the full pipeline |
 | `autotracker.py` | Core photogrammetry: FFmpeg, COLMAP feature extraction, matching, and Global Mapper |
 | `colmap2nerf.py` | Converts COLMAP sparse model to `transforms.json` |
-| `undistortionNerfstudioColmap.py` | Undistorts images; expands canvas or crops to original size |
+| `undistortionNerfstudioColmap.py` | Undistorts images (expands canvas or crops to original size), or with `--keep-distortion` passes distorted frames + coefficients through unrectified |
 | `restore_distortion.py` | Utility to apply or remove lens distortion from rendered images. Supports EXR via `--exr` |
 | `build_houdini_scene.py` | Generates a `.hip` file with point cloud and animated camera |
 | `batch_run.py` | Batch runner with per-folder INI configuration |
@@ -268,10 +278,17 @@ For each processed video:
     ├── sparse/                    # COLMAP sparse reconstruction
     ├── database.db                # COLMAP feature database
     ├── points3D.ply               # Point cloud
-    ├── undistort/
+    ├── undistort/                 # Default (rectified) path
     │   ├── images_undistorted/    # Undistorted frames
     │   └── transforms_undistorted.json
     └── <video_name>.hip           # Houdini project file
+```
+
+With `--keep-distortion` (`OPENCV`/`FULL_OPENCV` only), the `undistort/` folder is replaced by:
+
+```
+    └── keep_distortion/
+        └── transforms_original.json   # References the original images/ frames; distortion coefficients preserved
 ```
 
 ## References
