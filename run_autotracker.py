@@ -3,6 +3,28 @@ import os
 import subprocess
 import sys
 
+KEEP_DISTORTION_ALLOWED_MODELS = {"OPENCV", "FULL_OPENCV"}
+
+
+def validate_keep_distortion_args(camera_model, keep_distortion):
+    """Return an error message string if the combination of camera_model and
+    keep_distortion is invalid, else None."""
+    if keep_distortion and camera_model.upper() not in KEEP_DISTORTION_ALLOWED_MODELS:
+        return (
+            f"--keep-distortion requires --camera_model to be one of "
+            f"{sorted(KEEP_DISTORTION_ALLOWED_MODELS)}; got {camera_model!r}."
+        )
+    return None
+
+
+def undistort_output_paths(folder_path, keep_distortion):
+    """Return (output_dir, json_filename) for the undistortion / keep-distortion
+    step, given the scene's output folder path."""
+    if keep_distortion:
+        return os.path.join(folder_path, "keep_distortion"), "transforms_original.json"
+    return os.path.join(folder_path, "undistort"), "transforms_undistorted.json"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Batch runner for autotracker and colmap conversion.")
     parser.add_argument("input_path", help="Path to input directory (videos)")
@@ -26,8 +48,14 @@ def main():
     parser.add_argument("--focal_length_mm", type=float, default=None, help="Lens focal length in mm (e.g. 24). Combined with --sensor_width_mm to set COLMAP camera_params.")
     parser.add_argument("--sensor_width_mm", type=float, default=36.0, help="Sensor width in mm (default: 36.0 full-frame). Common values: ARRI LF=36.7, Super35=24.89, MFT=17.3")
     parser.add_argument("--crop", action="store_true", help="Keep original canvas size during undistortion instead of expanding it. Focal length and aperture in Houdini remain at their nominal physical values.")
+    parser.add_argument("--keep-distortion", dest="keep_distortion", action="store_true", help="Skip rectification; pass the original distorted images and OpenCV distortion coefficients through to Houdini instead. Only valid with --camera_model OPENCV or FULL_OPENCV.")
 
     args = parser.parse_args()
+
+    validation_error = validate_keep_distortion_args(args.camera_model, args.keep_distortion)
+    if validation_error:
+        print(f"[ERROR] {validation_error}")
+        sys.exit(1)
 
     input_path = os.path.abspath(args.input_path)
     output_path = os.path.abspath(args.output_path)
@@ -146,13 +174,17 @@ def main():
     undistortion_script = os.path.join(script_dir, "undistortionNerfstudioColmap.py")
 
     for json_path, folder_name in generated_jsons:
-        undistort_output_dir = os.path.join(output_path, folder_name, "undistort")
+        undistort_output_dir, json_filename = undistort_output_paths(
+            os.path.join(output_path, folder_name), args.keep_distortion
+        )
         cmd_undistort = [
             sys.executable, undistortion_script,
             "--original_json", json_path,
             "--output_dir", undistort_output_dir
         ]
-        if args.crop:
+        if args.keep_distortion:
+            cmd_undistort.append("--keep-distortion")
+        elif args.crop:
             cmd_undistort.append("--crop")
         print(f"Running: {' '.join(cmd_undistort)}")
         try:
@@ -186,8 +218,8 @@ def main():
         for folder in subfolders:
             folder_path = os.path.join(output_path, folder)
             ply_path = os.path.join(folder_path, "points3D.ply").replace("\\", "/")
-            undistort_dir = os.path.join(folder_path, "undistort")
-            json_path = os.path.join(undistort_dir, "transforms_undistorted.json").replace("\\", "/")
+            undistort_dir, undistort_json_filename = undistort_output_paths(folder_path, args.keep_distortion)
+            json_path = os.path.join(undistort_dir, undistort_json_filename).replace("\\", "/")
             hip_path = os.path.join(folder_path, f"{folder}.hip").replace("\\", "/")
 
             if os.path.exists(ply_path) and os.path.exists(json_path):
