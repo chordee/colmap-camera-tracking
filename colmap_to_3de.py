@@ -8,6 +8,33 @@ class SceneLoadError(Exception):
     unsupported shape (e.g. multi-camera)."""
 
 
+def flip_point_to_3de(x, y, z):
+    """Apply the same Rx(180) world-space flip build_houdini_scene.py uses
+    (diag(1,-1,-1)) to a single point, in 3DE's own column-vector convention.
+    3DE and Houdini share the same Y-up world (confirmed via 3DE's official
+    export_houdini.py, whose Houdini-axis conversion is a documented no-op),
+    so this is the same flip used for both the camera and the point cloud."""
+    return (x, -y, -z)
+
+
+def colmap_matrix_to_3de(matrix):
+    """Convert one camera-to-world 4x4 matrix (as stored in
+    transforms_undistorted.json -- column-vector convention, COLMAP/OpenCV
+    axes already converted to OpenGL/NeRF camera-local axes by colmap2nerf.py,
+    but still in COLMAP's original world frame) into (position, rotation) in
+    3DE's column-vector convention, ready for tde4.setPGroupPosition3D /
+    setPGroupRotation3D. Applies the same Rx(180) = diag(1,-1,-1) world flip
+    as build_houdini_scene.py, in column-vector form (not Houdini's internal
+    row-vector convention, which is the transpose of this)."""
+    position = list(flip_point_to_3de(matrix[0][3], matrix[1][3], matrix[2][3]))
+    rotation = [
+        [matrix[0][0], matrix[0][1], matrix[0][2]],
+        [-matrix[1][0], -matrix[1][1], -matrix[1][2]],
+        [-matrix[2][0], -matrix[2][1], -matrix[2][2]],
+    ]
+    return position, rotation
+
+
 def _get_frame_num(file_path):
     fname = os.path.basename(file_path)
     match = re.search(r'(\d+)', fname)

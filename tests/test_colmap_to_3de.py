@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_to_3de import SceneLoadError, load_scene
+from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de
 
 
 def _write_json(path, data):
@@ -99,6 +99,62 @@ class TestLoadScene(unittest.TestCase):
             scene_dir = self._make_scene(Path(tmp), camera_json=multi_cam_json)
             with self.assertRaises(SceneLoadError):
                 load_scene(str(scene_dir))
+
+
+class TestColmapMatrixTo3de(unittest.TestCase):
+    def test_identity_frame(self):
+        matrix = [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+        position, rotation = colmap_matrix_to_3de(matrix)
+        self.assertEqual(position, [0.0, 0.0, 0.0])
+        self.assertEqual(rotation, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+
+    def test_frame1_matches_real_houdini_bake(self):
+        # Real transform_matrix from demo-test/walking-forest-exr-output's frame 1.
+        matrix = [
+            [1.0, 4.286811358594259e-16, -6.514761575350366e-16, 0.24618224016037848],
+            [4.2868113585942726e-16, -1.0, 2.0864680150277905e-15, -0.3791985651695287],
+            [-6.514761575350358e-16, -2.0864680150277913e-15, -1.0, -6.332398622318554],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        position, rotation = colmap_matrix_to_3de(matrix)
+        # Verified against hython: cam.parm('tx'/'ty'/'tz').evalAsFloatAtFrame(1)
+        # on the real walking-forest-exr.hip.
+        self.assertAlmostEqual(position[0], 0.24618224016037848, places=9)
+        self.assertAlmostEqual(position[1], 0.3791985651695287, places=9)
+        self.assertAlmostEqual(position[2], 6.332398622318554, places=9)
+        # Near-identity rotation (frame 1 looks straight down -Z, matching the
+        # source matrix's near-diag(1,-1,-1) camera-local basis).
+        self.assertAlmostEqual(rotation[0][0], 1.0, places=6)
+        self.assertAlmostEqual(rotation[1][1], 1.0, places=6)
+        self.assertAlmostEqual(rotation[2][2], 1.0, places=6)
+
+    def test_frame2_matches_real_houdini_bake(self):
+        # Real transform_matrix from demo-test/walking-forest-exr-output's frame 2.
+        matrix = [
+            [0.9999997238518143, 6.481495497135973e-05, 0.00074033459788004, 0.24626607526936112],
+            [6.544238430871263e-05, -0.9999996387291866, -0.0008475014987890106, -0.3841761334195393],
+            [0.0007402793996472756, 0.0008475497140142808, -0.9999993668227459, -6.2811209126363075],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+        position, rotation = colmap_matrix_to_3de(matrix)
+        self.assertAlmostEqual(position[0], 0.24626607526936112, places=9)
+        self.assertAlmostEqual(position[1], 0.3841761334195393, places=9)
+        self.assertAlmostEqual(position[2], 6.2811209126363075, places=9)
+        # rotation = flip @ M[:3,:3] -- verified by hand against the transpose
+        # of hython's extractRotates()-reconstructed matrix for this frame.
+        expected_rotation = [
+            [0.9999997238518143, 6.481495497135973e-05, 0.00074033459788004],
+            [-6.544238430871263e-05, 0.9999996387291866, 0.0008475014987890106],
+            [-0.0007402793996472756, -0.0008475497140142808, 0.9999993668227459],
+        ]
+        for i in range(3):
+            for j in range(3):
+                self.assertAlmostEqual(rotation[i][j], expected_rotation[i][j], places=9)
+
+
+class TestFlipPointTo3de(unittest.TestCase):
+    def test_flips_y_and_z(self):
+        self.assertEqual(flip_point_to_3de(1.0, 2.0, 3.0), (1.0, -2.0, -3.0))
 
 
 if __name__ == "__main__":
