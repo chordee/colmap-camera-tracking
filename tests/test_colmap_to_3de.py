@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de
+from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt
 
 
 def _write_json(path, data):
@@ -155,6 +155,49 @@ class TestColmapMatrixTo3de(unittest.TestCase):
 class TestFlipPointTo3de(unittest.TestCase):
     def test_flips_y_and_z(self):
         self.assertEqual(flip_point_to_3de(1.0, 2.0, 3.0), (1.0, -2.0, -3.0))
+
+
+class TestPointsToSurveyLines(unittest.TestCase):
+    def test_flips_and_names_points(self):
+        points = [{"id": "42", "x": 1.0, "y": 2.0, "z": 3.0}]
+        lines = points_to_survey_lines(points)
+        self.assertEqual(lines, [("p42", 1.0, -2.0, -3.0)])
+
+    def test_preserves_point_order(self):
+        points = [{"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+                  {"id": "2", "x": 1.0, "y": 1.0, "z": 1.0}]
+        lines = points_to_survey_lines(points)
+        self.assertEqual([name for name, x, y, z in lines], ["p1", "p2"])
+
+
+class TestWriteSurveyPointsTxt(unittest.TestCase):
+    def test_writes_four_column_format(self):
+        import tempfile
+        points = [{"id": "1", "x": 1.5, "y": 2.5, "z": 3.5}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "points.txt")
+            write_survey_points_txt(points, out_path)
+            with open(out_path) as f:
+                lines = f.read().splitlines()
+        self.assertEqual(len(lines), 1)
+        parts = lines[0].split()
+        self.assertEqual(len(parts), 4)
+        self.assertEqual(parts[0], "p1")
+        self.assertAlmostEqual(float(parts[1]), 1.5)
+        self.assertAlmostEqual(float(parts[2]), -2.5)
+        self.assertAlmostEqual(float(parts[3]), -3.5)
+
+    def test_writes_one_line_per_point(self):
+        import tempfile
+        points = [{"id": "1", "x": 0.0, "y": 0.0, "z": 0.0},
+                  {"id": "2", "x": 1.0, "y": 1.0, "z": 1.0},
+                  {"id": "3", "x": 2.0, "y": 2.0, "z": 2.0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "points.txt")
+            write_survey_points_txt(points, out_path)
+            with open(out_path) as f:
+                lines = f.read().splitlines()
+        self.assertEqual(len(lines), 3)
 
 
 if __name__ == "__main__":

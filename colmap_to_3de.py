@@ -35,6 +35,25 @@ def colmap_matrix_to_3de(matrix):
     return position, rotation
 
 
+def points_to_survey_lines(points):
+    """Convert load_scene()'s point list into (name, x, y, z) tuples in
+    3DE's flipped world space, ready for the Import Survey Textfile format."""
+    lines = []
+    for p in points:
+        x, y, z = flip_point_to_3de(p["x"], p["y"], p["z"])
+        lines.append((f"p{p['id']}", x, y, z))
+    return lines
+
+
+def write_survey_points_txt(points, out_path):
+    """Write 3DE's native 'Import Survey Textfile' ASCII format: one
+    '<name> <x> <y> <z>' line per point, whitespace-separated."""
+    lines = points_to_survey_lines(points)
+    with open(out_path, "w") as f:
+        for name, x, y, z in lines:
+            f.write(f"{name} {x:.6f} {y:.6f} {z:.6f}\n")
+
+
 def _get_frame_num(file_path):
     fname = os.path.basename(file_path)
     match = re.search(r'(\d+)', fname)
