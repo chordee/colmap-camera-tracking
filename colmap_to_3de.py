@@ -54,6 +54,93 @@ def write_survey_points_txt(points, out_path):
             f.write(f"{name} {x:.6f} {y:.6f} {z:.6f}\n")
 
 
+def write_camera_import_script(scene, scene_name, sensor_width_mm, out_path):
+    """Generate a self-contained .py script that, when run from inside a
+    live 3DEqualizer session (via its Script Database menu -- see the
+    3DE4.script.gui header below), creates a CAMERA point group with a fully
+    animated camera: per-frame position/rotation (from colmap_matrix_to_3de),
+    static focal length, film back, and principal-point offset.
+
+    sensor_width_mm is the same physical-sensor-width-in-mm input
+    build_houdini_scene.py --sensor_width_mm already requires, since the
+    source JSON's fl_x/fl_y are in pixels, not a physical unit."""
+    fl_x = scene["fl_x"]
+    sensor_w_px = scene["sensor_w"]
+    img_w = scene["w"]
+    img_h = scene["h"]
+    cx = scene["cx"]
+    cy = scene["cy"]
+
+    focal_mm = (fl_x / sensor_w_px) * sensor_width_mm
+    focal_cm = focal_mm / 10.0
+
+    fback_w_mm = sensor_width_mm * (img_w / sensor_w_px)
+    fback_h_mm = fback_w_mm * (img_h / img_w)
+    fback_w_cm = fback_w_mm / 10.0
+    fback_h_cm = fback_h_mm / 10.0
+
+    winx_frac = (img_w / 2 - cx) / img_w
+    winy_frac = (img_h / 2 - cy) / img_h
+    lens_center_x_cm = -winx_frac * fback_w_cm
+    lens_center_y_cm = -winy_frac * fback_h_cm
+
+    frames = scene["frames"]
+    frame_nums = [f["frame_num"] for f in frames]
+    start_frame = frame_nums[0]
+    end_frame = frame_nums[-1]
+
+    lines = []
+    lines.append("#")
+    lines.append("# 3DE4.script.name:\tImport COLMAP Camera (%s)..." % scene_name)
+    lines.append("#")
+    lines.append("# 3DE4.script.version:\tv1.0")
+    lines.append("#")
+    lines.append("# 3DE4.script.gui:\tMain Window::3DE4::File::Import")
+    lines.append("#")
+    lines.append("# 3DE4.script.comment:\tImports the animated camera solved by the "
+                  "AI Colmap Camera Tracking pipeline for scene '%s'." % scene_name)
+    lines.append("#")
+    lines.append("")
+    lines.append("import tde4")
+    lines.append("")
+    lines.append("pgroup_id = tde4.createPGroup(\"CAMERA\")")
+    lines.append("tde4.setPGroupName(pgroup_id, \"%s\")" % scene_name)
+    lines.append("camera_id = tde4.createCamera(\"SEQUENCE\")")
+    lines.append("tde4.setCameraName(camera_id, \"%s\")" % scene_name)
+    lines.append("tde4.setCameraImageWidth(camera_id, %d)" % int(img_w))
+    lines.append("tde4.setCameraImageHeight(camera_id, %d)" % int(img_h))
+    lines.append("tde4.setCameraSequenceAttr(camera_id, %d, %d, 1)"
+                  % (start_frame, end_frame))
+    lines.append("")
+    lines.append("lens_id = tde4.createLens()")
+    lines.append("tde4.setLensName(lens_id, \"%s_lens\")" % scene_name)
+    lines.append("tde4.setLensFBackWidth(lens_id, %s)" % repr(round(fback_w_cm, 6)))
+    lines.append("tde4.setLensFBackHeight(lens_id, %s)" % repr(round(fback_h_cm, 6)))
+    lines.append("tde4.setLensPixelAspect(lens_id, 1.0)")
+    lines.append("tde4.setLensLensCenterX(lens_id, %s)" % repr(round(lens_center_x_cm, 6) + 0.0))
+    lines.append("tde4.setLensLensCenterY(lens_id, %s)" % repr(round(lens_center_y_cm, 6) + 0.0))
+    lines.append("tde4.setCameraLens(camera_id, lens_id)")
+    lines.append("")
+
+    for frame_data in frames:
+        frame_num = frame_data["frame_num"]
+        position, rotation = colmap_matrix_to_3de(frame_data["transform_matrix"])
+        lines.append("tde4.setCameraFocalLength(camera_id, %d, %s)"
+                      % (frame_num, repr(round(focal_cm, 6))))
+        lines.append("tde4.setPGroupPosition3D(pgroup_id, camera_id, %d, %s)"
+                      % (frame_num, [round(v, 9) for v in position]))
+        lines.append("tde4.setPGroupRotation3D(pgroup_id, camera_id, %d, %s)"
+                      % (frame_num, [[round(v, 9) for v in row] for row in rotation]))
+
+    lines.append("")
+    lines.append("tde4.postQuestionRequester(\"Import COLMAP Camera...\", "
+                  "\"Camera '%s' imported successfully.\", \"Ok\")" % scene_name)
+    lines.append("")
+
+    with open(out_path, "w") as f:
+        f.write("\n".join(lines))
+
+
 def _get_frame_num(file_path):
     fname = os.path.basename(file_path)
     match = re.search(r'(\d+)', fname)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt
+from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt, write_camera_import_script
 
 
 def _write_json(path, data):
@@ -198,6 +198,54 @@ class TestWriteSurveyPointsTxt(unittest.TestCase):
             with open(out_path) as f:
                 lines = f.read().splitlines()
         self.assertEqual(len(lines), 3)
+
+
+class TestWriteCameraImportScript(unittest.TestCase):
+    def test_generates_script_with_3de4_menu_header_and_embedded_data(self):
+        import tempfile
+        scene = {
+            "w": 1920.0, "h": 1080.0, "sensor_w": 1920.0, "sensor_h": 1080.0,
+            "fl_x": 960.0, "fl_y": 960.0, "cx": 960.0, "cy": 540.0,
+            "frames": [
+                {"frame_num": 1, "transform_matrix": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]},
+                {"frame_num": 2, "transform_matrix": [[1, 0, 0, 1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]},
+            ],
+            "points": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "import_camera.py")
+            write_camera_import_script(scene, "demo_scene", sensor_width_mm=36.0, out_path=out_path)
+            with open(out_path) as f:
+                content = f.read()
+
+        # 3DE Script Database discovers scripts via these header comments --
+        # matches the convention used by every official script in
+        # D:\Programs\3DE4_win64_r5\sys_data\py_scripts\ (e.g. export_houdini.py).
+        self.assertIn("# 3DE4.script.name:", content)
+        self.assertIn("# 3DE4.script.gui:\tMain Window::3DE4::File::Import", content)
+        self.assertIn("import tde4", content)
+        self.assertIn("tde4.createPGroup(\"CAMERA\")", content)
+        self.assertIn("tde4.createCamera(\"SEQUENCE\")", content)
+        self.assertIn("tde4.createLens()", content)
+        # frame count and image dimensions must be embedded literally
+        self.assertIn("tde4.setCameraSequenceAttr(camera_id, 1, 2, 1)", content)
+        self.assertIn("tde4.setCameraImageWidth(camera_id, 1920)", content)
+        self.assertIn("tde4.setCameraImageHeight(camera_id, 1080)", content)
+        # per-frame position/rotation must be present for both frames
+        self.assertIn("tde4.setPGroupPosition3D(pgroup_id, camera_id, 1,", content)
+        self.assertIn("tde4.setPGroupPosition3D(pgroup_id, camera_id, 2,", content)
+        self.assertIn("tde4.setPGroupRotation3D(pgroup_id, camera_id, 1,", content)
+        # focal length: fl_x=960px, sensor_w=1920px, sensor_width_mm=36.0
+        # -> focal_mm = (960/1920)*36.0 = 18.0mm -> 1.8cm
+        self.assertIn("tde4.setCameraFocalLength(camera_id, 1, 1.8)", content)
+        self.assertIn("tde4.setCameraFocalLength(camera_id, 2, 1.8)", content)
+        # film back: fback_w_mm = 36.0*(1920/1920) = 36.0mm -> 3.6cm;
+        # fback_h_mm = 36.0*(1080/1920) = 20.25mm -> 2.025cm
+        self.assertIn("tde4.setLensFBackWidth(lens_id, 3.6)", content)
+        self.assertIn("tde4.setLensFBackHeight(lens_id, 2.025)", content)
+        # principal point centered (cx=w/2, cy=h/2) -> zero lens center offset
+        self.assertIn("tde4.setLensLensCenterX(lens_id, 0.0)", content)
+        self.assertIn("tde4.setLensLensCenterY(lens_id, 0.0)", content)
 
 
 if __name__ == "__main__":
