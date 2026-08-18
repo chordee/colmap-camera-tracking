@@ -248,6 +248,10 @@ class TestWriteCameraImportScript(unittest.TestCase):
         # principal point centered (cx=w/2, cy=h/2) -> zero lens center offset
         self.assertIn("tde4.setLensLensCenterX(lens_id, 0.0)", content)
         self.assertIn("tde4.setLensLensCenterY(lens_id, 0.0)", content)
+        # newly created pgroup/camera must be made current so 3DE's UI
+        # (timeline, viewer, Import Survey Textfile) targets them
+        self.assertIn("tde4.setCurrentPGroup(pgroup_id)", content)
+        self.assertIn("tde4.setCurrentCamera(camera_id)", content)
 
 
 if __name__ == "__main__":

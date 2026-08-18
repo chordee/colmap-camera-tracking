@@ -135,8 +135,15 @@ def write_camera_import_script(scene, scene_name, sensor_width_mm, out_path, ima
                       % (frame_num, [[round(v, 9) for v in row] for row in rotation]))
 
     lines.append("")
+    # Make the newly created pgroup/camera current so 3DE's UI (timeline,
+    # 3D viewer) and native features that operate on the current pgroup
+    # (e.g. File > Import > Import Survey Textfile...) target this camera.
+    lines.append("tde4.setCurrentPGroup(pgroup_id)")
+    lines.append("tde4.setCurrentCamera(camera_id)")
+    lines.append("")
     lines.append("tde4.postQuestionRequester(\"Import COLMAP Camera...\", "
-                  "\"Camera '%s' imported successfully.\", \"Ok\")" % scene_name)
+                  "\"Camera '%s' imported successfully. Use File > Import > "
+                  "Import Survey Textfile... to import the point cloud.\", \"Ok\")" % scene_name)
     lines.append("")
 
     with open(out_path, "w") as f:
