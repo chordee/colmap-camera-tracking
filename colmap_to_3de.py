@@ -54,7 +54,7 @@ def write_survey_points_txt(points, out_path):
             f.write(f"{name} {x:.6f} {y:.6f} {z:.6f}\n")
 
 
-def write_camera_import_script(scene, scene_name, sensor_width_mm, out_path):
+def write_camera_import_script(scene, scene_name, sensor_width_mm, out_path, images_dir):
     """Generate a self-contained .py script that, when run from inside a
     live 3DEqualizer session (via its Script Database menu -- see the
     3DE4.script.gui header below), creates a CAMERA point group with a fully
@@ -109,6 +109,8 @@ def write_camera_import_script(scene, scene_name, sensor_width_mm, out_path):
     lines.append("tde4.setCameraName(camera_id, \"%s\")" % scene_name)
     lines.append("tde4.setCameraImageWidth(camera_id, %d)" % int(img_w))
     lines.append("tde4.setCameraImageHeight(camera_id, %d)" % int(img_h))
+    lines.append("tde4.setCameraPath(camera_id, \"%s/frame_######.jpg\")"
+                  % images_dir.replace(os.sep, "/"))
     lines.append("tde4.setCameraSequenceAttr(camera_id, %d, %d, 1)"
                   % (start_frame, end_frame))
     lines.append("")

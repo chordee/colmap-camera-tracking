@@ -99,9 +99,11 @@ class MainWindow(QMainWindow):
         points_path = os.path.join(output_dir, f"{scene_name}_points.txt")
         camera_script_path = os.path.join(output_dir, f"{scene_name}_import_camera.py")
 
+        images_dir = os.path.join(scene_dir, "undistort", "images_undistorted").replace(os.sep, "/")
+
         try:
             write_survey_points_txt(scene["points"], points_path)
-            write_camera_import_script(scene, scene_name, sensor_width_mm, camera_script_path)
+            write_camera_import_script(scene, scene_name, sensor_width_mm, camera_script_path, images_dir)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export files:")
             self._log(traceback.format_exc())

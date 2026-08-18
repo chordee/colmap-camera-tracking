@@ -214,7 +214,8 @@ class TestWriteCameraImportScript(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "import_camera.py")
-            write_camera_import_script(scene, "demo_scene", sensor_width_mm=36.0, out_path=out_path)
+            write_camera_import_script(scene, "demo_scene", sensor_width_mm=36.0, out_path=out_path,
+                                        images_dir="/fake/scene/undistort/images_undistorted")
             with open(out_path) as f:
                 content = f.read()
 
@@ -231,6 +232,7 @@ class TestWriteCameraImportScript(unittest.TestCase):
         self.assertIn("tde4.setCameraSequenceAttr(camera_id, 1, 2, 1)", content)
         self.assertIn("tde4.setCameraImageWidth(camera_id, 1920)", content)
         self.assertIn("tde4.setCameraImageHeight(camera_id, 1080)", content)
+        self.assertIn("tde4.setCameraPath(camera_id, \"/fake/scene/undistort/images_undistorted/frame_######.jpg\")", content)
         # per-frame position/rotation must be present for both frames
         self.assertIn("tde4.setPGroupPosition3D(pgroup_id, camera_id, 1,", content)
         self.assertIn("tde4.setPGroupPosition3D(pgroup_id, camera_id, 2,", content)
