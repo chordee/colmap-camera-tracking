@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
 )
 
 from colmap_to_3de import (
-    SceneLoadError, load_scene, sample_points, write_camera_import_script, write_survey_points_txt,
+    SceneLoadError, filter_by_min_track_length, load_scene, sample_points,
+    write_camera_import_script, write_survey_points_txt,
 )
 
 
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("COLMAP -> 3DEqualizer Export")
         self.resize(640, 480)
+        self._scene_points = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -70,6 +72,13 @@ class MainWindow(QMainWindow):
         self.max_points.setSpecialValueText("No limit")
         form.addRow("Max points (0 = no limit):", self.max_points)
 
+        self.min_track_length = QSpinBox()
+        self.min_track_length.setRange(0, 100_000)
+        self.min_track_length.setValue(0)
+        self.min_track_length.setSpecialValueText("No filter")
+        self.min_track_length.valueChanged.connect(self._update_points_preview)
+        form.addRow("Min track length (0 = no filter):", self.min_track_length)
+
         layout.addLayout(form)
 
         self.export_button = QPushButton("Export")
@@ -86,17 +95,34 @@ class MainWindow(QMainWindow):
     def _on_scene_dir_changed(self, scene_dir):
         scene_dir = scene_dir.strip()
         if not scene_dir:
+            self._scene_points = None
             self.points_available.setText("Points available: (select a scene folder)")
             return
         try:
             scene = load_scene(scene_dir)
         except SceneLoadError as e:
+            self._scene_points = None
             self.points_available.setText(f"Points available: (could not read scene -- {e})")
             return
         except Exception:
+            self._scene_points = None
             self.points_available.setText("Points available: (could not read scene)")
             return
-        self.points_available.setText(f"Points available: {len(scene['points'])}")
+        self._scene_points = scene["points"]
+        self._update_points_preview()
+
+    def _update_points_preview(self):
+        if self._scene_points is None:
+            return
+        total = len(self._scene_points)
+        min_track_length = self.min_track_length.value()
+        remaining = len(filter_by_min_track_length(self._scene_points, min_track_length))
+        if min_track_length:
+            self.points_available.setText(
+                f"Points available: {remaining} of {total} (track length >= {min_track_length})"
+            )
+        else:
+            self.points_available.setText(f"Points available: {total}")
 
     def _on_export(self):
         scene_dir = self.scene_dir.text()
@@ -129,8 +155,10 @@ class MainWindow(QMainWindow):
 
         images_dir = os.path.join(scene_dir, "undistort", "images_undistorted").replace(os.sep, "/")
 
+        min_track_length = self.min_track_length.value()
         max_points = self.max_points.value()
-        points_to_export = sample_points(scene["points"], max_points)
+        filtered_points = filter_by_min_track_length(scene["points"], min_track_length)
+        points_to_export = sample_points(filtered_points, max_points)
 
         try:
             write_survey_points_txt(points_to_export, points_path)
@@ -140,8 +168,11 @@ class MainWindow(QMainWindow):
             self._log(traceback.format_exc())
             return
 
-        if len(points_to_export) < len(scene["points"]):
-            self._log(f"Exported {len(points_to_export)} of {len(scene['points'])} points "
+        if min_track_length:
+            self._log(f"Kept {len(filtered_points)} of {len(scene['points'])} points "
+                       f"with track length >= {min_track_length}.")
+        if len(points_to_export) < len(filtered_points):
+            self._log(f"Exported {len(points_to_export)} of {len(filtered_points)} points "
                        f"(randomly sampled) to: {points_path}")
         else:
             self._log(f"Exported {len(points_to_export)} points to: {points_path}")

@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt, write_camera_import_script, sample_points
+from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt, write_camera_import_script, sample_points, filter_by_min_track_length
 
 
 def _write_json(path, data):
@@ -67,8 +67,19 @@ class TestLoadScene(unittest.TestCase):
             scene_dir = self._make_scene(Path(tmp))
             data = load_scene(str(scene_dir))
             self.assertEqual(len(data["points"]), 2)
-            self.assertEqual(data["points"][0], {"id": "1", "x": 1.0, "y": 2.0, "z": 3.0})
-            self.assertEqual(data["points"][1], {"id": "2", "x": 4.0, "y": 5.0, "z": 6.0})
+            self.assertEqual(data["points"][0], {"id": "1", "x": 1.0, "y": 2.0, "z": 3.0, "track_length": 1})
+            self.assertEqual(data["points"][1], {"id": "2", "x": 4.0, "y": 5.0, "z": 6.0, "track_length": 1})
+
+    def test_loads_track_length_from_track_array(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            # POINT3D_ID X Y Z R G B ERROR TRACK[](IMAGE_ID,POINT2D_IDX)... --
+            # 3 track pairs (1,0) (2,0) (3,0) -> track_length 3.
+            scene_dir = self._make_scene(Path(tmp), point_lines=[
+                "1 1.0 2.0 3.0 255 0 0 0.5 1 0 2 0 3 0",
+            ])
+            data = load_scene(str(scene_dir))
+            self.assertEqual(data["points"][0]["track_length"], 3)
 
     def test_missing_transforms_json_raises(self):
         import tempfile
@@ -252,6 +263,33 @@ class TestWriteCameraImportScript(unittest.TestCase):
         # (timeline, viewer, Import Survey Textfile) targets them
         self.assertIn("tde4.setCurrentPGroup(pgroup_id)", content)
         self.assertIn("tde4.setCurrentCamera(camera_id)", content)
+
+
+class TestFilterByMinTrackLength(unittest.TestCase):
+    def _points_with_tracks(self, lengths):
+        return [{"id": str(i), "x": 0.0, "y": 0.0, "z": 0.0, "track_length": t}
+                 for i, t in enumerate(lengths)]
+
+    def test_no_threshold_returns_all_points_unchanged(self):
+        points = self._points_with_tracks([1, 2, 3])
+        self.assertEqual(filter_by_min_track_length(points, None), points)
+        self.assertEqual(filter_by_min_track_length(points, 0), points)
+
+    def test_drops_points_below_threshold(self):
+        points = self._points_with_tracks([1, 2, 3, 5, 10])
+        result = filter_by_min_track_length(points, 3)
+        self.assertEqual([p["track_length"] for p in result], [3, 5, 10])
+
+    def test_keeps_points_exactly_at_threshold(self):
+        points = self._points_with_tracks([2, 3])
+        result = filter_by_min_track_length(points, 3)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["track_length"], 3)
+
+    def test_threshold_above_all_points_returns_empty(self):
+        points = self._points_with_tracks([1, 2, 3])
+        result = filter_by_min_track_length(points, 100)
+        self.assertEqual(result, [])
 
 
 class TestSamplePoints(unittest.TestCase):

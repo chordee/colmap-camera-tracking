@@ -36,6 +36,15 @@ def colmap_matrix_to_3de(matrix):
     return position, rotation
 
 
+def filter_by_min_track_length(points, min_track_length):
+    """Drop points observed in fewer than min_track_length images (COLMAP's
+    TRACK[] length) -- points with a short track are more likely to be noisy
+    or spurious triangulations. None/0 disables filtering."""
+    if not min_track_length:
+        return points
+    return [p for p in points if p["track_length"] >= min_track_length]
+
+
 def sample_points(points, max_points, seed=None):
     """Return `points` unchanged when max_points is None/0 (no limit);
     otherwise a uniform random sample of at most max_points, without
@@ -189,11 +198,15 @@ def _load_points(points3d_path):
             parts = line.split()
             if len(parts) < 7:
                 continue
+            # Fixed fields are ID,X,Y,Z,R,G,B,ERROR (8); everything after
+            # that is TRACK[] as repeated (IMAGE_ID, POINT2D_IDX) pairs --
+            # its pair count is how many images this point was observed in.
             points.append({
                 "id": parts[0],
                 "x": float(parts[1]),
                 "y": float(parts[2]),
                 "z": float(parts[3]),
+                "track_length": (len(parts) - 8) // 2,
             })
     return points
 
