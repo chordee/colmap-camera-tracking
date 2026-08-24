@@ -5,10 +5,12 @@ import traceback
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
-    QDoubleSpinBox, QFormLayout,
+    QDoubleSpinBox, QSpinBox, QFormLayout,
 )
 
-from colmap_to_3de import SceneLoadError, load_scene, write_camera_import_script, write_survey_points_txt
+from colmap_to_3de import (
+    SceneLoadError, load_scene, sample_points, write_camera_import_script, write_survey_points_txt,
+)
 
 
 class PathPicker(QWidget):
@@ -47,7 +49,12 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         self.scene_dir = PathPicker(mode="dir")
+        self.scene_dir.edit.textChanged.connect(self._on_scene_dir_changed)
         form.addRow("Scene folder:", self.scene_dir)
+
+        self.points_available = QLabel("Points available: (select a scene folder)")
+        form.addRow("", self.points_available)
+
         self.output_dir = PathPicker(mode="dir")
         form.addRow("Output folder:", self.output_dir)
 
@@ -56,6 +63,12 @@ class MainWindow(QMainWindow):
         self.sensor_width_mm.setDecimals(2)
         self.sensor_width_mm.setValue(36.0)
         form.addRow("Sensor width (mm):", self.sensor_width_mm)
+
+        self.max_points = QSpinBox()
+        self.max_points.setRange(0, 100_000_000)
+        self.max_points.setValue(0)
+        self.max_points.setSpecialValueText("No limit")
+        form.addRow("Max points (0 = no limit):", self.max_points)
 
         layout.addLayout(form)
 
@@ -69,6 +82,21 @@ class MainWindow(QMainWindow):
 
     def _log(self, message):
         self.log.append(message)
+
+    def _on_scene_dir_changed(self, scene_dir):
+        scene_dir = scene_dir.strip()
+        if not scene_dir:
+            self.points_available.setText("Points available: (select a scene folder)")
+            return
+        try:
+            scene = load_scene(scene_dir)
+        except SceneLoadError as e:
+            self.points_available.setText(f"Points available: (could not read scene -- {e})")
+            return
+        except Exception:
+            self.points_available.setText("Points available: (could not read scene)")
+            return
+        self.points_available.setText(f"Points available: {len(scene['points'])}")
 
     def _on_export(self):
         scene_dir = self.scene_dir.text()
@@ -101,15 +129,22 @@ class MainWindow(QMainWindow):
 
         images_dir = os.path.join(scene_dir, "undistort", "images_undistorted").replace(os.sep, "/")
 
+        max_points = self.max_points.value()
+        points_to_export = sample_points(scene["points"], max_points)
+
         try:
-            write_survey_points_txt(scene["points"], points_path)
+            write_survey_points_txt(points_to_export, points_path)
             write_camera_import_script(scene, scene_name, sensor_width_mm, camera_script_path, images_dir)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export files:")
             self._log(traceback.format_exc())
             return
 
-        self._log(f"Exported {len(scene['points'])} points to: {points_path}")
+        if len(points_to_export) < len(scene["points"]):
+            self._log(f"Exported {len(points_to_export)} of {len(scene['points'])} points "
+                       f"(randomly sampled) to: {points_path}")
+        else:
+            self._log(f"Exported {len(points_to_export)} points to: {points_path}")
         self._log(f"Exported {len(scene['frames'])} frames to: {camera_script_path}")
         self._log("")
         self._log("Next steps:")

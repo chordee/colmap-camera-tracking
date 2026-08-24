@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt, write_camera_import_script
+from colmap_to_3de import SceneLoadError, load_scene, colmap_matrix_to_3de, flip_point_to_3de, points_to_survey_lines, write_survey_points_txt, write_camera_import_script, sample_points
 
 
 def _write_json(path, data):
@@ -252,6 +252,40 @@ class TestWriteCameraImportScript(unittest.TestCase):
         # (timeline, viewer, Import Survey Textfile) targets them
         self.assertIn("tde4.setCurrentPGroup(pgroup_id)", content)
         self.assertIn("tde4.setCurrentCamera(camera_id)", content)
+
+
+class TestSamplePoints(unittest.TestCase):
+    def _points(self, n):
+        return [{"id": str(i), "x": float(i), "y": 0.0, "z": 0.0} for i in range(n)]
+
+    def test_no_limit_returns_all_points_unchanged(self):
+        points = self._points(10)
+        self.assertEqual(sample_points(points, None), points)
+        self.assertEqual(sample_points(points, 0), points)
+
+    def test_limit_returns_exact_count(self):
+        points = self._points(1000)
+        result = sample_points(points, 100, seed=42)
+        self.assertEqual(len(result), 100)
+
+    def test_limit_greater_than_available_returns_all(self):
+        points = self._points(10)
+        result = sample_points(points, 100, seed=42)
+        self.assertEqual(len(result), 10)
+
+    def test_sample_is_a_subset_with_no_duplicates(self):
+        points = self._points(1000)
+        result = sample_points(points, 100, seed=42)
+        ids = [p["id"] for p in result]
+        self.assertEqual(len(ids), len(set(ids)))
+        for p in result:
+            self.assertIn(p, points)
+
+    def test_seed_makes_sampling_deterministic(self):
+        points = self._points(1000)
+        result1 = sample_points(points, 50, seed=7)
+        result2 = sample_points(points, 50, seed=7)
+        self.assertEqual(result1, result2)
 
 
 if __name__ == "__main__":

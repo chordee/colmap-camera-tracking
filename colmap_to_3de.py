@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import re
 
 
@@ -33,6 +34,18 @@ def colmap_matrix_to_3de(matrix):
         [-matrix[2][0], -matrix[2][1], -matrix[2][2]],
     ]
     return position, rotation
+
+
+def sample_points(points, max_points, seed=None):
+    """Return `points` unchanged when max_points is None/0 (no limit);
+    otherwise a uniform random sample of at most max_points, without
+    replacement, so the exported subset stays representative of the full
+    point cloud's spatial distribution rather than favoring whatever
+    POINT3D_ID ordering COLMAP happened to emit."""
+    if not max_points or max_points >= len(points):
+        return points
+    rng = random.Random(seed)
+    return rng.sample(points, max_points)
 
 
 def points_to_survey_lines(points):
