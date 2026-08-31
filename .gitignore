@@ -44,3 +44,4 @@ vocab_tree_*.bin
 demo-test/*
 !demo-test/walking-forest/
 !demo-test/walking-forest/**
+!track_interchange/
