@@ -142,5 +142,5 @@ def write_3de_2d_tracks_txt(tracks, production_start_frame, out_path):
             frame_3de = obs["production_frame"] - production_start_frame + 1
             lines.append(f"{frame_3de} {obs['x']:.15f} {obs['y']:.15f}")
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

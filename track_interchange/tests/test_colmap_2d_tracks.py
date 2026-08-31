@@ -244,6 +244,15 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         self.assertEqual(lines[3], "5")
         self.assertEqual(len(lines), 4 + 5)
 
+    def test_no_crlf_line_endings(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            with open(out_path, "rb") as f:
+                data = f.read()
+        self.assertNotIn(b"\r\n", data)
+
     def test_empty_track_list_writes_zero(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
