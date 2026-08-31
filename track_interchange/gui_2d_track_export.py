@@ -171,10 +171,10 @@ class MainWindow(QMainWindow):
         filtered_tracks = filter_by_min_observations(scene["tracks"], min_observations)
         tracks_to_export = sample_tracks(filtered_tracks, max_tracks)
 
-        os.makedirs(output_dir, exist_ok=True)
         tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
 
         try:
+            os.makedirs(output_dir, exist_ok=True)
             write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, scene["height"], tracks_path)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export file:")

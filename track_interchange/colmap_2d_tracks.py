@@ -18,15 +18,26 @@ def _get_frame_num(file_path):
 
 def load_image_size(cameras_path):
     """Read (width, height) from COLMAP's sparse/0/cameras.txt -- the
-    original, undistorted-pipeline-untouched image size (assumes a single
-    shared camera, this pipeline's default single_camera COLMAP setting)."""
+    original, undistorted-pipeline-untouched image size. Rejects scenes
+    with cameras of differing dimensions: write_3de_2d_tracks_txt's Y-flip
+    uses one global height, so a mixed-dimension scene would silently
+    apply the wrong height to some observations' Y coordinates."""
+    sizes = []
     with open(cameras_path, "r") as f:
         for line in f:
             if line.startswith("#"):
                 continue
             parts = line.split()
-            return int(float(parts[2])), int(float(parts[3]))
-    raise SceneLoadError(f"No camera found in {cameras_path}")
+            sizes.append((int(float(parts[2])), int(float(parts[3]))))
+    if not sizes:
+        raise SceneLoadError(f"No camera found in {cameras_path}")
+    if len(set(sizes)) > 1:
+        raise SceneLoadError(
+            f"Multiple cameras with different image dimensions found in "
+            f"{cameras_path} ({sorted(set(sizes))}) -- mixed-dimension "
+            f"scenes are not supported."
+        )
+    return sizes[0]
 
 
 def build_tracks(images_path):

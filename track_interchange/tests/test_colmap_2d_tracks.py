@@ -26,6 +26,13 @@ IMAGES_TXT = """# Image list with two lines of data per image:
 # Second fixture: frame 1 has point 5 twice at different pixel positions --
 # a same-track/same-frame conflict. Track 5 must be dropped entirely; track
 # 9 (conflict-free) must still come through.
+CAMERAS_TXT_MIXED_SIZES = """# Camera list with one line of data per camera:
+#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
+# Number of cameras: 2
+1 SIMPLE_RADIAL 1920 1080 1000.0 960 540 0.0
+2 SIMPLE_RADIAL 1280 720 800.0 640 360 0.0
+"""
+
 IMAGES_TXT_WITH_CONFLICT = """# Image list with two lines of data per image:
 #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
 #   POINTS2D[] as (X, Y, POINT3D_ID)
@@ -108,6 +115,13 @@ class TestLoadScene(unittest.TestCase):
             sparse_dir = scene_dir / "sparse" / "0"
             sparse_dir.mkdir(parents=True)
             (sparse_dir / "cameras.txt").write_text(CAMERAS_TXT)
+            with self.assertRaises(SceneLoadError):
+                load_scene(str(scene_dir))
+
+    def test_mixed_camera_dimensions_raises(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = _make_scene(Path(tmp), cameras_txt=CAMERAS_TXT_MIXED_SIZES)
             with self.assertRaises(SceneLoadError):
                 load_scene(str(scene_dir))
 
