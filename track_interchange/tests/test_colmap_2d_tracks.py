@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -110,6 +110,61 @@ class TestLoadScene(unittest.TestCase):
             (sparse_dir / "cameras.txt").write_text(CAMERAS_TXT)
             with self.assertRaises(SceneLoadError):
                 load_scene(str(scene_dir))
+
+
+def _tracks_with_observation_counts(counts):
+    return [
+        {"track_id": f"colmap::{i}", "track_name": f"p{i}",
+         "observations": [{"production_frame": f, "x": 0.0, "y": 0.0} for f in range(n)]}
+        for i, n in enumerate(counts)
+    ]
+
+
+class TestFilterByMinObservations(unittest.TestCase):
+    def test_no_threshold_returns_all_tracks_unchanged(self):
+        tracks = _tracks_with_observation_counts([1, 2, 3])
+        self.assertEqual(filter_by_min_observations(tracks, None), tracks)
+        self.assertEqual(filter_by_min_observations(tracks, 0), tracks)
+
+    def test_drops_tracks_below_threshold(self):
+        tracks = _tracks_with_observation_counts([1, 2, 3, 5, 10])
+        result = filter_by_min_observations(tracks, 3)
+        self.assertEqual([len(t["observations"]) for t in result], [3, 5, 10])
+
+    def test_keeps_tracks_exactly_at_threshold(self):
+        tracks = _tracks_with_observation_counts([2, 3])
+        result = filter_by_min_observations(tracks, 3)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result[0]["observations"]), 3)
+
+
+class TestSampleTracks(unittest.TestCase):
+    def _tracks(self, n):
+        return [{"track_id": f"colmap::{i}", "track_name": f"p{i}", "observations": []}
+                 for i in range(n)]
+
+    def test_no_limit_returns_all_tracks_unchanged(self):
+        tracks = self._tracks(10)
+        self.assertEqual(sample_tracks(tracks, None), tracks)
+        self.assertEqual(sample_tracks(tracks, 0), tracks)
+
+    def test_limit_returns_exact_count(self):
+        tracks = self._tracks(1000)
+        result = sample_tracks(tracks, 100, seed=42)
+        self.assertEqual(len(result), 100)
+
+    def test_limit_greater_than_available_returns_all(self):
+        tracks = self._tracks(10)
+        result = sample_tracks(tracks, 100, seed=42)
+        self.assertEqual(len(result), 10)
+
+    def test_sample_is_a_subset_with_no_duplicates(self):
+        tracks = self._tracks(1000)
+        result = sample_tracks(tracks, 100, seed=42)
+        ids = [t["track_id"] for t in result]
+        self.assertEqual(len(ids), len(set(ids)))
+        for t in result:
+            self.assertIn(t, tracks)
 
 
 if __name__ == "__main__":

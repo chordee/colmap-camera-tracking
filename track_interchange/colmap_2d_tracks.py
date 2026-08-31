@@ -1,5 +1,6 @@
 import math
 import os
+import random
 import re
 
 
@@ -102,3 +103,23 @@ def load_scene(scene_dir):
         "width": width, "height": height,
         "tracks": tracks, "conflict_count": conflict_count,
     }
+
+
+def filter_by_min_observations(tracks, min_observations):
+    """Drop tracks with fewer than min_observations total observations -- a
+    track's observation count is its 'existence duration' proxy; shorter
+    tracks are more likely to be spurious COLMAP feature matches.
+    None/0 disables filtering."""
+    if not min_observations:
+        return tracks
+    return [t for t in tracks if len(t["observations"]) >= min_observations]
+
+
+def sample_tracks(tracks, max_tracks, seed=None):
+    """Return tracks unchanged when max_tracks is None/0 (no limit);
+    otherwise a uniform random sample of at most max_tracks, without
+    replacement."""
+    if not max_tracks or max_tracks >= len(tracks):
+        return tracks
+    rng = random.Random(seed)
+    return rng.sample(tracks, max_tracks)
