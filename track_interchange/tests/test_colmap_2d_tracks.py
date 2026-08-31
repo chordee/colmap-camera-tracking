@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -165,6 +165,93 @@ class TestSampleTracks(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         for t in result:
             self.assertIn(t, tracks)
+
+
+class TestWrite3deTracksTxt(unittest.TestCase):
+    def _tracks(self):
+        return [
+            {"track_id": "colmap::5", "track_name": "p5", "observations": [
+                {"production_frame": 1, "x": 100.0, "y": 200.0},
+                {"production_frame": 2, "x": 110.0, "y": 210.0},
+            ]},
+            {"track_id": "colmap::7", "track_name": "p7", "observations": [
+                {"production_frame": 1, "x": 500.0, "y": 600.0},
+            ]},
+        ]
+
+    def test_no_blank_lines_or_comments(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertNotIn("\n\n", content)
+        self.assertNotIn("#", content)
+        lines = content.rstrip("\n").split("\n")
+        for line in lines:
+            self.assertEqual(line, line.strip(), f"line has leading/trailing whitespace: {line!r}")
+
+    def test_exact_structure(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        self.assertEqual(lines[0], "2")            # TRACK_COUNT
+        self.assertEqual(lines[1], "p5")            # TRACK_NAME
+        self.assertEqual(lines[2], "0")              # static field
+        self.assertEqual(lines[3], "2")              # SAMPLE_COUNT for p5
+        self.assertEqual(lines[4], "1 100.000000000000000 200.000000000000000")
+        self.assertEqual(lines[5], "2 110.000000000000000 210.000000000000000")
+        self.assertEqual(lines[6], "p7")
+        self.assertEqual(lines[7], "0")
+        self.assertEqual(lines[8], "1")              # SAMPLE_COUNT for p7
+        self.assertEqual(lines[9], "1 500.000000000000000 600.000000000000000")
+        self.assertEqual(len(lines), 10)
+
+    def test_production_start_frame_offset(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1001, "x": 1.0, "y": 2.0},
+            {"production_frame": 1005, "x": 3.0, "y": 4.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(tracks, production_start_frame=1001, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # 3de_internal_frame = production_frame - production_start_frame + 1
+        self.assertTrue(lines[4].startswith("1 "))   # 1001 - 1001 + 1 = 1
+        self.assertTrue(lines[5].startswith("5 "))   # 1005 - 1001 + 1 = 5
+
+    def test_natural_gaps_not_filled(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1, "x": 0.0, "y": 0.0},
+            {"production_frame": 2, "x": 0.0, "y": 0.0},
+            {"production_frame": 3, "x": 0.0, "y": 0.0},
+            {"production_frame": 7, "x": 0.0, "y": 0.0},
+            {"production_frame": 8, "x": 0.0, "y": 0.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(tracks, production_start_frame=1, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # SAMPLE_COUNT must be 5 (actual rows), not 8 (frame span)
+        self.assertEqual(lines[3], "5")
+        self.assertEqual(len(lines), 4 + 5)
+
+    def test_empty_track_list_writes_zero(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt([], production_start_frame=1, out_path=out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertEqual(content, "0\n")
 
 
 if __name__ == "__main__":

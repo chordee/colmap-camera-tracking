@@ -123,3 +123,24 @@ def sample_tracks(tracks, max_tracks, seed=None):
         return tracks
     rng = random.Random(seed)
     return rng.sample(tracks, max_tracks)
+
+
+def write_3de_2d_tracks_txt(tracks, production_start_frame, out_path):
+    """Write 3DEqualizer's native 2D Tracks ASCII format (ADAPTER_3DE_R5.md
+    v1 contract, cross-verified against the real bundled export_tracks.py):
+    TRACK_COUNT, then per track: name / static field "0" (verified-working
+    native format field; semantic meaning not confirmed upstream, must not
+    be promoted to a semantic concept here either) / sample count / one
+    "<frame> <x> <y>" line per observation. Zero blank lines, zero comments,
+    no indentation -- 3DE's grammar is exact-whitespace sensitive."""
+    lines = [str(len(tracks))]
+    for t in tracks:
+        lines.append(t["track_name"])
+        lines.append("0")
+        lines.append(str(len(t["observations"])))
+        for obs in t["observations"]:
+            frame_3de = obs["production_frame"] - production_start_frame + 1
+            lines.append(f"{frame_3de} {obs['x']:.15f} {obs['y']:.15f}")
+
+    with open(out_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
