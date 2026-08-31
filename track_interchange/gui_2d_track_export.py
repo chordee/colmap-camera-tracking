@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("COLMAP -> 3DEqualizer 2D Track Export")
         self.resize(640, 480)
-        self._scene_tracks = None
+        self._scene = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self.max_tracks.setRange(0, 100_000_000)
         self.max_tracks.setValue(0)
         self.max_tracks.setSpecialValueText("No limit")
+        self.max_tracks.valueChanged.connect(self._update_tracks_preview)
         form.addRow("Max tracks (0 = no limit):", self.max_tracks)
 
         layout.addLayout(form)
@@ -94,34 +95,45 @@ class MainWindow(QMainWindow):
     def _on_scene_dir_changed(self, scene_dir):
         scene_dir = scene_dir.strip()
         if not scene_dir:
-            self._scene_tracks = None
+            self._scene = None
             self.tracks_available.setText("Tracks available: (select a scene folder)")
             return
         try:
             scene = load_scene(scene_dir)
         except SceneLoadError as e:
-            self._scene_tracks = None
+            self._scene = None
             self.tracks_available.setText(f"Tracks available: (could not read scene -- {e})")
             return
         except Exception:
-            self._scene_tracks = None
+            self._scene = None
             self.tracks_available.setText("Tracks available: (could not read scene)")
             return
-        self._scene_tracks = scene["tracks"]
+        self._scene = scene
         if scene["conflict_count"]:
             self._log(f"[WARN] {scene['conflict_count']} track(s) dropped due to "
                        f"same-frame conflicts.")
         self._update_tracks_preview()
 
     def _update_tracks_preview(self):
-        if self._scene_tracks is None:
+        if self._scene is None:
             return
-        total = len(self._scene_tracks)
+        tracks = self._scene["tracks"]
+        total = len(tracks)
         min_observations = self.min_observations.value()
-        remaining = len(filter_by_min_observations(self._scene_tracks, min_observations))
-        if min_observations:
+        max_tracks = self.max_tracks.value()
+        remaining = len(filter_by_min_observations(tracks, min_observations))
+        if min_observations and max_tracks:
+            self.tracks_available.setText(
+                f"Tracks available: {min(remaining, max_tracks)} of {total} "
+                f"(observations >= {min_observations}, capped at {max_tracks})"
+            )
+        elif min_observations:
             self.tracks_available.setText(
                 f"Tracks available: {remaining} of {total} (observations >= {min_observations})"
+            )
+        elif max_tracks:
+            self.tracks_available.setText(
+                f"Tracks available: {min(remaining, max_tracks)} of {total} (capped at {max_tracks})"
             )
         else:
             self.tracks_available.setText(f"Tracks available: {total}")
@@ -140,16 +152,19 @@ class MainWindow(QMainWindow):
 
         scene_name = os.path.basename(os.path.normpath(scene_dir))
 
-        try:
-            self._log(f"Loading scene: {scene_dir}")
-            scene = load_scene(scene_dir)
-        except SceneLoadError as e:
-            self._log(f"[ERROR] {e}")
-            return
-        except Exception:
-            self._log("[ERROR] Unexpected error while loading scene:")
-            self._log(traceback.format_exc())
-            return
+        if self._scene is not None:
+            scene = self._scene
+        else:
+            try:
+                self._log(f"Loading scene: {scene_dir}")
+                scene = load_scene(scene_dir)
+            except SceneLoadError as e:
+                self._log(f"[ERROR] {e}")
+                return
+            except Exception:
+                self._log("[ERROR] Unexpected error while loading scene:")
+                self._log(traceback.format_exc())
+                return
 
         min_observations = self.min_observations.value()
         max_tracks = self.max_tracks.value()
@@ -160,7 +175,7 @@ class MainWindow(QMainWindow):
         tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
 
         try:
-            write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, tracks_path)
+            write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, scene["height"], tracks_path)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export file:")
             self._log(traceback.format_exc())

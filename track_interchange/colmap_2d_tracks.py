@@ -125,14 +125,18 @@ def sample_tracks(tracks, max_tracks, seed=None):
     return rng.sample(tracks, max_tracks)
 
 
-def write_3de_2d_tracks_txt(tracks, production_start_frame, out_path):
+def write_3de_2d_tracks_txt(tracks, production_start_frame, image_height, out_path):
     """Write 3DEqualizer's native 2D Tracks ASCII format (ADAPTER_3DE_R5.md
     v1 contract, cross-verified against the real bundled export_tracks.py):
     TRACK_COUNT, then per track: name / static field "0" (verified-working
     native format field; semantic meaning not confirmed upstream, must not
     be promoted to a semantic concept here either) / sample count / one
     "<frame> <x> <y>" line per observation. Zero blank lines, zero comments,
-    no indentation -- 3DE's grammar is exact-whitespace sensitive."""
+    no indentation -- 3DE's grammar is exact-whitespace sensitive.
+
+    COLMAP's coordinates are top-left-origin, Y-down. This 3DE format's Y is
+    bottom-left-origin, Y-up. Y is flipped as y_3de = image_height - y_colmap
+    for every observation to match 3DE's native convention."""
     lines = [str(len(tracks))]
     for t in tracks:
         lines.append(t["track_name"])
@@ -140,7 +144,14 @@ def write_3de_2d_tracks_txt(tracks, production_start_frame, out_path):
         lines.append(str(len(t["observations"])))
         for obs in t["observations"]:
             frame_3de = obs["production_frame"] - production_start_frame + 1
-            lines.append(f"{frame_3de} {obs['x']:.15f} {obs['y']:.15f}")
+            if frame_3de < 1:
+                raise ValueError(
+                    f"production_frame {obs['production_frame']} is before "
+                    f"production_start_frame {production_start_frame} "
+                    f"(resulting 3DE frame {frame_3de} < 1)"
+                )
+            y_3de = image_height - obs["y"]
+            lines.append(f"{frame_3de} {obs['x']:.15f} {y_3de:.15f}")
 
     with open(out_path, "w", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

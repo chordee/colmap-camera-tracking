@@ -183,7 +183,7 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, image_height=1080, out_path=out_path)
             with open(out_path) as f:
                 content = f.read()
         self.assertNotIn("\n\n", content)
@@ -196,19 +196,21 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, image_height=1080, out_path=out_path)
             with open(out_path) as f:
                 lines = f.read().rstrip("\n").split("\n")
         self.assertEqual(lines[0], "2")            # TRACK_COUNT
         self.assertEqual(lines[1], "p5")            # TRACK_NAME
         self.assertEqual(lines[2], "0")              # static field
         self.assertEqual(lines[3], "2")              # SAMPLE_COUNT for p5
-        self.assertEqual(lines[4], "1 100.000000000000000 200.000000000000000")
-        self.assertEqual(lines[5], "2 110.000000000000000 210.000000000000000")
+        # y_3de = image_height - y_colmap: 1080-200=880, 1080-210=870
+        self.assertEqual(lines[4], "1 100.000000000000000 880.000000000000000")
+        self.assertEqual(lines[5], "2 110.000000000000000 870.000000000000000")
         self.assertEqual(lines[6], "p7")
         self.assertEqual(lines[7], "0")
         self.assertEqual(lines[8], "1")              # SAMPLE_COUNT for p7
-        self.assertEqual(lines[9], "1 500.000000000000000 600.000000000000000")
+        # y_3de = 1080 - 600 = 480
+        self.assertEqual(lines[9], "1 500.000000000000000 480.000000000000000")
         self.assertEqual(len(lines), 10)
 
     def test_production_start_frame_offset(self):
@@ -219,7 +221,7 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         ]}]
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt(tracks, production_start_frame=1001, out_path=out_path)
+            write_3de_2d_tracks_txt(tracks, production_start_frame=1001, image_height=1080, out_path=out_path)
             with open(out_path) as f:
                 lines = f.read().rstrip("\n").split("\n")
         # 3de_internal_frame = production_frame - production_start_frame + 1
@@ -237,7 +239,7 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         ]}]
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt(tracks, production_start_frame=1, out_path=out_path)
+            write_3de_2d_tracks_txt(tracks, production_start_frame=1, image_height=1080, out_path=out_path)
             with open(out_path) as f:
                 lines = f.read().rstrip("\n").split("\n")
         # SAMPLE_COUNT must be 5 (actual rows), not 8 (frame span)
@@ -248,7 +250,7 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, out_path=out_path)
+            write_3de_2d_tracks_txt(self._tracks(), production_start_frame=1, image_height=1080, out_path=out_path)
             with open(out_path, "rb") as f:
                 data = f.read()
         self.assertNotIn(b"\r\n", data)
@@ -257,10 +259,33 @@ class TestWrite3deTracksTxt(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             out_path = str(Path(tmp) / "tracks.txt")
-            write_3de_2d_tracks_txt([], production_start_frame=1, out_path=out_path)
+            write_3de_2d_tracks_txt([], production_start_frame=1, image_height=1080, out_path=out_path)
             with open(out_path) as f:
                 content = f.read()
         self.assertEqual(content, "0\n")
+
+    def test_y_is_flipped_to_3de_bottom_up_convention(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::1", "track_name": "p1", "observations": [
+            {"production_frame": 1, "x": 100.0, "y": 300.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_3de_2d_tracks_txt(tracks, production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # y_3de = image_height - y_colmap = 1080 - 300.0 = 780.0
+        self.assertEqual(lines[4], "1 100.000000000000000 780.000000000000000")
+
+    def test_frame_before_production_start_raises(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1, "x": 0.0, "y": 0.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            with self.assertRaises(ValueError):
+                write_3de_2d_tracks_txt(tracks, production_start_frame=5, image_height=1080, out_path=out_path)
 
 
 if __name__ == "__main__":
