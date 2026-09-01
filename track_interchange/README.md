@@ -78,7 +78,8 @@ The GUI is a thin wrapper. To script the conversion yourself (batch jobs,
 custom filtering, etc.), the core functions are in `colmap_2d_tracks.py`:
 
 ```python
-from colmap_2d_tracks import (
+# run from the repo root, so track_interchange resolves as a namespace package
+from track_interchange.colmap_2d_tracks import (
     load_scene, is_exportable, filter_by_min_observations,
     sample_tracks, write_3de_2d_tracks_txt, write_structural_qc_report,
 )

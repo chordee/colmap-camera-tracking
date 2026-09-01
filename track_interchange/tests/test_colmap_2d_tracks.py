@@ -390,6 +390,19 @@ class TestClassifyStructuralStatus(unittest.TestCase):
         result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
         self.assertEqual(result[0]["structural_status"], "INVALID_FRAME")
 
+    def test_nested_image_path_is_recognized_as_existing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images" / "camera_a").mkdir(parents=True)
+            (scene_dir / "images" / "camera_a" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 1, "x": 5.0, "y": 5.0,
+                 "image_name": "camera_a/frame_000001.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "VALID")
+
     def test_images_dir_missing_skips_image_check(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

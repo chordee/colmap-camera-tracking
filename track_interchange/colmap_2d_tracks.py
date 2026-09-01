@@ -114,10 +114,22 @@ def classify_structural_status(tracks, scene_dir, width, height):
     penalized for it). This is intentional, not an oversight: real COLMAP
     scene folders always ship an images/ directory, so the skip only
     protects against a malformed/incomplete scene folder rather than
-    silently failing the whole classification pass."""
+    silently failing the whole classification pass.
+
+    image_name may be a relative path with subdirectories (COLMAP records
+    images.txt NAME entries as paths relative to the images/ root when the
+    source images were organized in subfolders), so the on-disk listing is
+    built by walking images_dir recursively rather than a flat listdir."""
     images_dir = os.path.join(scene_dir, "images")
-    # If images directory exists, get the set of files; otherwise None (skip check)
-    existing_images = set(os.listdir(images_dir)) if os.path.isdir(images_dir) else None
+    if os.path.isdir(images_dir):
+        existing_images = set()
+        for root, _dirs, files in os.walk(images_dir):
+            rel_root = os.path.relpath(root, images_dir)
+            for fname in files:
+                rel_path = fname if rel_root == "." else os.path.join(rel_root, fname)
+                existing_images.add(rel_path.replace(os.sep, "/"))
+    else:
+        existing_images = None
 
     result = []
     for t in tracks:
@@ -130,7 +142,8 @@ def classify_structural_status(tracks, scene_dir, width, height):
         image_missing = False
         if existing_images is not None:
             image_missing = any(
-                obs["image_name"] not in existing_images for obs in t["observations"]
+                obs["image_name"].replace(os.sep, "/") not in existing_images
+                for obs in t["observations"]
             )
 
         coords_bad = any(
