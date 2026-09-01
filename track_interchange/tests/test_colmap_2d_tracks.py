@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -382,6 +382,64 @@ class TestClassifyStructuralStatus(unittest.TestCase):
         ])]
         classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
         self.assertEqual(tracks[0]["structural_status"], "VALID")
+
+
+class TestClassifyExactDuplicates(unittest.TestCase):
+    def test_identical_tracks_flagged_with_smallest_id_as_primary(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "frame_000001.jpg"}]
+        tracks = [
+            _track("colmap::99", list(obs)),
+            _track("colmap::3", list(obs)),
+            _track("colmap::42", list(obs)),
+        ]
+        result = classify_exact_duplicates(tracks)
+        by_id = {t["track_id"]: t for t in result}
+        self.assertEqual(by_id["colmap::3"]["duplicate_status"], "UNIQUE")
+        self.assertIsNone(by_id["colmap::3"]["duplicate_of"])
+        self.assertEqual(by_id["colmap::42"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::42"]["duplicate_of"], "colmap::3")
+        self.assertEqual(by_id["colmap::99"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::99"]["duplicate_of"], "colmap::3")
+
+    def test_near_duplicate_not_flagged(self):
+        tracks = [
+            _track("colmap::1", [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]),
+            _track("colmap::2", [{"production_frame": 1, "x": 10.0, "y": 20.0001, "image_name": "a.jpg"}]),
+        ]
+        result = classify_exact_duplicates(tracks)
+        for t in result:
+            self.assertEqual(t["duplicate_status"], "UNIQUE")
+
+    def test_different_observation_count_not_flagged(self):
+        tracks = [
+            _track("colmap::1", [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]),
+            _track("colmap::2", [
+                {"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"},
+                {"production_frame": 2, "x": 11.0, "y": 21.0, "image_name": "b.jpg"},
+            ]),
+        ]
+        result = classify_exact_duplicates(tracks)
+        for t in result:
+            self.assertEqual(t["duplicate_status"], "UNIQUE")
+
+    def test_invalid_track_can_also_be_flagged_duplicate(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]
+        tracks = [
+            _track("colmap::1", list(obs)),
+            _track("colmap::2", list(obs), structural_status="CONFLICT"),
+        ]
+        result = classify_exact_duplicates(tracks)
+        by_id = {t["track_id"]: t for t in result}
+        # both statuses coexist: still CONFLICT, ALSO flagged as a duplicate secondary
+        self.assertEqual(by_id["colmap::2"]["structural_status"], "CONFLICT")
+        self.assertEqual(by_id["colmap::2"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::2"]["duplicate_of"], "colmap::1")
+
+    def test_does_not_mutate_input(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]
+        tracks = [_track("colmap::1", list(obs)), _track("colmap::2", list(obs))]
+        classify_exact_duplicates(tracks)
+        self.assertEqual(tracks[1]["duplicate_status"], "UNIQUE")
 
 
 if __name__ == "__main__":

@@ -147,6 +147,43 @@ def classify_structural_status(tracks, scene_dir, width, height):
     return result
 
 
+def classify_exact_duplicates(tracks):
+    """Detect exact-duplicate tracks (identical canonical observation
+    sequences: same count, same (production_frame, x, y) values, no
+    rounding, no tolerance) across ALL tracks regardless of
+    structural_status. Grouping by the canonical tuple as a dict key is
+    O(n) (Python's dict hashing/equality handles this directly -- no manual
+    bucketing needed). Within each duplicate group, PRIMARY = smallest
+    point3d_id (compared numerically); every other member gets
+    duplicate_status="EXACT_DUPLICATE" and duplicate_of=<PRIMARY track_id>.
+    Returns a new list; does not mutate the input."""
+    def canonical_key(t):
+        return tuple(sorted(
+            (o["production_frame"], o["x"], o["y"]) for o in t["observations"]
+        ))
+
+    def point_id_num(track_id):
+        return int(track_id.split("::", 1)[1])
+
+    groups = {}
+    for t in tracks:
+        groups.setdefault(canonical_key(t), []).append(t["track_id"])
+
+    result = [dict(t) for t in tracks]
+    by_track_id = {t["track_id"]: t for t in result}
+
+    for track_ids in groups.values():
+        if len(track_ids) < 2:
+            continue
+        primary_id = min(track_ids, key=point_id_num)
+        for tid in track_ids:
+            if tid != primary_id:
+                by_track_id[tid]["duplicate_status"] = "EXACT_DUPLICATE"
+                by_track_id[tid]["duplicate_of"] = primary_id
+
+    return result
+
+
 def load_scene(scene_dir):
     """Read a processed COLMAP tracking scene folder's raw (undistorted-
     pipeline-untouched) 2D feature observations and build persistent tracks."""
