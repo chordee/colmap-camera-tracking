@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -312,6 +312,76 @@ class TestWrite3deTracksTxt(unittest.TestCase):
             out_path = str(Path(tmp) / "tracks.txt")
             with self.assertRaises(ValueError):
                 write_3de_2d_tracks_txt(tracks, production_start_frame=5, image_height=1080, out_path=out_path)
+
+
+def _track(track_id, observations, structural_status="VALID"):
+    return {
+        "track_id": track_id, "track_name": track_id.split("::")[1],
+        "observations": observations,
+        "structural_status": structural_status,
+        "duplicate_status": "UNIQUE", "duplicate_of": None,
+    }
+
+
+class TestClassifyStructuralStatus(unittest.TestCase):
+    def test_coords_out_of_domain_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": 5000.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_COORDS")
+
+    def test_negative_coords_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": -1.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_COORDS")
+
+    def test_missing_image_file_flagged(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images").mkdir()
+            (scene_dir / "images" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 2, "x": 5.0, "y": 5.0, "image_name": "frame_000002.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "INVALID_IMAGE_MISSING")
+
+    def test_existing_image_file_stays_valid(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images").mkdir()
+            (scene_dir / "images" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 1, "x": 5.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "VALID")
+
+    def test_unparseable_frame_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 0, "x": 5.0, "y": 5.0, "image_name": "no_digits_here.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_FRAME")
+
+    def test_conflict_status_untouched(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 5000, "x": -1.0, "y": -1.0, "image_name": "missing.jpg"},
+        ], structural_status="CONFLICT")]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "CONFLICT")
+
+    def test_does_not_mutate_input(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": -1.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(tracks[0]["structural_status"], "VALID")
 
 
 if __name__ == "__main__":

@@ -103,6 +103,50 @@ def build_tracks(images_path):
     return tracks
 
 
+def classify_structural_status(tracks, scene_dir, width, height):
+    """Refine each non-CONFLICT track's structural_status by checking, over
+    all of its observations: coordinates inside the image domain, the
+    referenced image file exists on disk, and the frame number was
+    successfully parsed. Precedence when a track fails more than one check:
+    INVALID_IMAGE_MISSING > INVALID_COORDS > INVALID_FRAME (CONFLICT tracks,
+    already tagged by build_tracks, are left untouched -- highest
+    precedence). Returns a new list; does not mutate the input."""
+    images_dir = os.path.join(scene_dir, "images")
+    # If images directory exists, get the set of files; otherwise None (skip check)
+    existing_images = set(os.listdir(images_dir)) if os.path.isdir(images_dir) else None
+
+    result = []
+    for t in tracks:
+        new_t = dict(t)
+        if new_t["structural_status"] == "CONFLICT":
+            result.append(new_t)
+            continue
+
+        # Only check image existence if we have an images directory
+        image_missing = False
+        if existing_images is not None:
+            image_missing = any(
+                obs["image_name"] not in existing_images for obs in t["observations"]
+            )
+
+        coords_bad = any(
+            not (0 <= obs["x"] < width and 0 <= obs["y"] < height)
+            for obs in t["observations"]
+        )
+        frame_bad = any(obs["production_frame"] == 0 for obs in t["observations"])
+
+        if image_missing:
+            new_t["structural_status"] = "INVALID_IMAGE_MISSING"
+        elif coords_bad:
+            new_t["structural_status"] = "INVALID_COORDS"
+        elif frame_bad:
+            new_t["structural_status"] = "INVALID_FRAME"
+        else:
+            new_t["structural_status"] = "VALID"
+        result.append(new_t)
+    return result
+
+
 def load_scene(scene_dir):
     """Read a processed COLMAP tracking scene folder's raw (undistorted-
     pipeline-untouched) 2D feature observations and build persistent tracks."""
