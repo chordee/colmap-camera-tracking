@@ -1,4 +1,3 @@
-import math
 import os
 import random
 import re
@@ -76,8 +75,6 @@ def build_tracks(images_path):
             point3d_id = parts[j + 2]
             if point3d_id == "-1":
                 continue
-            if not (math.isfinite(x) and math.isfinite(y)):
-                continue
             seen = seen_frames_by_point.setdefault(point3d_id, set())
             if frame_num in seen:
                 conflict_ids.add(point3d_id)
@@ -110,7 +107,14 @@ def classify_structural_status(tracks, scene_dir, width, height):
     successfully parsed. Precedence when a track fails more than one check:
     INVALID_IMAGE_MISSING > INVALID_COORDS > INVALID_FRAME (CONFLICT tracks,
     already tagged by build_tracks, are left untouched -- highest
-    precedence). Returns a new list; does not mutate the input."""
+    precedence). Returns a new list; does not mutate the input.
+
+    If scene_dir's images/ subdirectory does not exist at all, the
+    image-existence check is skipped for every track (they are not
+    penalized for it). This is intentional, not an oversight: real COLMAP
+    scene folders always ship an images/ directory, so the skip only
+    protects against a malformed/incomplete scene folder rather than
+    silently failing the whole classification pass."""
     images_dir = os.path.join(scene_dir, "images")
     # If images directory exists, get the set of files; otherwise None (skip check)
     existing_images = set(os.listdir(images_dir)) if os.path.isdir(images_dir) else None

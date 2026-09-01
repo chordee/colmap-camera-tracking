@@ -109,6 +109,10 @@ class MainWindow(QMainWindow):
             self.tracks_available.setText("Tracks available: (could not read scene)")
             return
         self._scene = scene
+        if not os.path.isdir(os.path.join(scene_dir, "images")):
+            self._log("[WARN] No images/ folder found in the scene directory -- the "
+                       "missing-image-file structural check could not run (structural_status "
+                       "may report VALID for tracks with genuinely missing image files).")
         non_exportable = sum(1 for t in scene["tracks"] if not is_exportable(t))
         if non_exportable:
             self._log(f"[WARN] {non_exportable} of {len(scene['tracks'])} track(s) excluded "
