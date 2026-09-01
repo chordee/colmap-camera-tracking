@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates, is_exportable, write_structural_qc_report
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -23,9 +23,6 @@ IMAGES_TXT = """# Image list with two lines of data per image:
 110.0 210.0 5 510.0 610.0 7
 """
 
-# Second fixture: frame 1 has point 5 twice at different pixel positions --
-# a same-track/same-frame conflict. Track 5 must be dropped entirely; track
-# 9 (conflict-free) must still come through.
 CAMERAS_TXT_MIXED_SIZES = """# Camera list with one line of data per camera:
 #   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
 # Number of cameras: 2
@@ -33,12 +30,26 @@ CAMERAS_TXT_MIXED_SIZES = """# Camera list with one line of data per camera:
 2 SIMPLE_RADIAL 1280 720 800.0 640 360 0.0
 """
 
+# Second fixture: frame 1 has point 5 twice at different pixel positions --
+# a same-track/same-frame conflict. Track 5 must be retained with structural_status
+# "CONFLICT"; track 9 (conflict-free) must still come through with status "VALID".
 IMAGES_TXT_WITH_CONFLICT = """# Image list with two lines of data per image:
 #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
 #   POINTS2D[] as (X, Y, POINT3D_ID)
 # Number of images: 1
 1 1 0 0 0 0 0 0 1 frame_000001.jpg
 100.0 200.0 5 150.0 250.0 5 300.0 400.0 9
+"""
+
+
+# Third fixture: frame 1's point 5 has a NaN x coordinate -- must surface as
+# INVALID_COORDS on the track, not be silently dropped from the track list.
+IMAGES_TXT_WITH_NONFINITE_COORD = """# Image list with two lines of data per image:
+#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+#   POINTS2D[] as (X, Y, POINT3D_ID)
+# Number of images: 1
+1 1 0 0 0 0 0 0 1 frame_000001.jpg
+nan 200.0 5
 """
 
 
@@ -76,9 +87,12 @@ class TestLoadScene(unittest.TestCase):
             track5 = next(t for t in data["tracks"] if t["track_id"] == "colmap::5")
             self.assertEqual(track5["track_name"], "p5")
             self.assertEqual(track5["observations"], [
-                {"production_frame": 1, "x": 100.0, "y": 200.0},
-                {"production_frame": 2, "x": 110.0, "y": 210.0},
+                {"production_frame": 1, "x": 100.0, "y": 200.0, "image_name": "frame_000001.jpg"},
+                {"production_frame": 2, "x": 110.0, "y": 210.0, "image_name": "frame_000002.jpg"},
             ])
+            self.assertEqual(track5["structural_status"], "VALID")
+            self.assertEqual(track5["duplicate_status"], "UNIQUE")
+            self.assertIsNone(track5["duplicate_of"])
 
     def test_excludes_point3d_id_negative_one(self):
         import tempfile
@@ -88,15 +102,34 @@ class TestLoadScene(unittest.TestCase):
             track_ids = [t["track_id"] for t in data["tracks"]]
             self.assertNotIn("colmap::-1", track_ids)
 
-    def test_same_frame_conflict_drops_track_and_is_counted(self):
+    def test_same_frame_conflict_retains_track_with_status(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             scene_dir = _make_scene(Path(tmp), images_txt=IMAGES_TXT_WITH_CONFLICT)
             data = load_scene(str(scene_dir))
             track_ids = [t["track_id"] for t in data["tracks"]]
-            self.assertNotIn("colmap::5", track_ids)
+            self.assertIn("colmap::5", track_ids)
             self.assertIn("colmap::9", track_ids)
-            self.assertEqual(data["conflict_count"], 1)
+            track5 = next(t for t in data["tracks"] if t["track_id"] == "colmap::5")
+            self.assertEqual(track5["structural_status"], "CONFLICT")
+            # both raw, conflicting observations for frame 1 are retained --
+            # never averaged, never a single "winner" picked.
+            self.assertEqual(track5["observations"], [
+                {"production_frame": 1, "x": 100.0, "y": 200.0, "image_name": "frame_000001.jpg"},
+                {"production_frame": 1, "x": 150.0, "y": 250.0, "image_name": "frame_000001.jpg"},
+            ])
+            track9 = next(t for t in data["tracks"] if t["track_id"] == "colmap::9")
+            self.assertEqual(track9["structural_status"], "VALID")
+
+    def test_nonfinite_coord_surfaces_as_invalid_coords_not_dropped(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = _make_scene(Path(tmp), images_txt=IMAGES_TXT_WITH_NONFINITE_COORD)
+            data = load_scene(str(scene_dir))
+            track_ids = [t["track_id"] for t in data["tracks"]]
+            self.assertIn("colmap::5", track_ids)
+            track5 = next(t for t in data["tracks"] if t["track_id"] == "colmap::5")
+            self.assertEqual(track5["structural_status"], "INVALID_COORDS")
 
     def test_missing_cameras_txt_raises(self):
         import tempfile
@@ -300,6 +333,229 @@ class TestWrite3deTracksTxt(unittest.TestCase):
             out_path = str(Path(tmp) / "tracks.txt")
             with self.assertRaises(ValueError):
                 write_3de_2d_tracks_txt(tracks, production_start_frame=5, image_height=1080, out_path=out_path)
+
+
+def _track(track_id, observations, structural_status="VALID"):
+    return {
+        "track_id": track_id, "track_name": track_id.split("::")[1],
+        "observations": observations,
+        "structural_status": structural_status,
+        "duplicate_status": "UNIQUE", "duplicate_of": None,
+    }
+
+
+class TestClassifyStructuralStatus(unittest.TestCase):
+    def test_coords_out_of_domain_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": 5000.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_COORDS")
+
+    def test_negative_coords_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": -1.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_COORDS")
+
+    def test_missing_image_file_flagged(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images").mkdir()
+            (scene_dir / "images" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 2, "x": 5.0, "y": 5.0, "image_name": "frame_000002.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "INVALID_IMAGE_MISSING")
+
+    def test_existing_image_file_stays_valid(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images").mkdir()
+            (scene_dir / "images" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 1, "x": 5.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "VALID")
+
+    def test_unparseable_frame_flagged(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 0, "x": 5.0, "y": 5.0, "image_name": "no_digits_here.jpg"},
+        ])]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "INVALID_FRAME")
+
+    def test_nested_image_path_is_recognized_as_existing(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            (scene_dir / "images" / "camera_a").mkdir(parents=True)
+            (scene_dir / "images" / "camera_a" / "frame_000001.jpg").write_text("")
+            tracks = [_track("colmap::1", [
+                {"production_frame": 1, "x": 5.0, "y": 5.0,
+                 "image_name": "camera_a/frame_000001.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertEqual(result[0]["structural_status"], "VALID")
+
+    def test_images_dir_missing_skips_image_check(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = Path(tmp)
+            # No "images" subdirectory created at all.
+            tracks = [_track("colmap::1", [
+                {"production_frame": 1, "x": 5.0, "y": 5.0, "image_name": "definitely_missing.jpg"},
+            ])]
+            result = classify_structural_status(tracks, str(scene_dir), width=1920, height=1080)
+            self.assertNotEqual(result[0]["structural_status"], "INVALID_IMAGE_MISSING")
+            self.assertEqual(result[0]["structural_status"], "VALID")
+
+    def test_conflict_status_untouched(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 5000, "x": -1.0, "y": -1.0, "image_name": "missing.jpg"},
+        ], structural_status="CONFLICT")]
+        result = classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(result[0]["structural_status"], "CONFLICT")
+
+    def test_does_not_mutate_input(self):
+        tracks = [_track("colmap::1", [
+            {"production_frame": 1, "x": -1.0, "y": 5.0, "image_name": "frame_000001.jpg"},
+        ])]
+        classify_structural_status(tracks, scene_dir="/does/not/matter", width=1920, height=1080)
+        self.assertEqual(tracks[0]["structural_status"], "VALID")
+
+
+class TestClassifyExactDuplicates(unittest.TestCase):
+    def test_identical_tracks_flagged_with_smallest_id_as_primary(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "frame_000001.jpg"}]
+        tracks = [
+            _track("colmap::99", list(obs)),
+            _track("colmap::3", list(obs)),
+            _track("colmap::42", list(obs)),
+        ]
+        result = classify_exact_duplicates(tracks)
+        by_id = {t["track_id"]: t for t in result}
+        self.assertEqual(by_id["colmap::3"]["duplicate_status"], "UNIQUE")
+        self.assertIsNone(by_id["colmap::3"]["duplicate_of"])
+        self.assertEqual(by_id["colmap::42"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::42"]["duplicate_of"], "colmap::3")
+        self.assertEqual(by_id["colmap::99"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::99"]["duplicate_of"], "colmap::3")
+
+    def test_near_duplicate_not_flagged(self):
+        tracks = [
+            _track("colmap::1", [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]),
+            _track("colmap::2", [{"production_frame": 1, "x": 10.0, "y": 20.0001, "image_name": "a.jpg"}]),
+        ]
+        result = classify_exact_duplicates(tracks)
+        for t in result:
+            self.assertEqual(t["duplicate_status"], "UNIQUE")
+
+    def test_different_observation_count_not_flagged(self):
+        tracks = [
+            _track("colmap::1", [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]),
+            _track("colmap::2", [
+                {"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"},
+                {"production_frame": 2, "x": 11.0, "y": 21.0, "image_name": "b.jpg"},
+            ]),
+        ]
+        result = classify_exact_duplicates(tracks)
+        for t in result:
+            self.assertEqual(t["duplicate_status"], "UNIQUE")
+
+    def test_invalid_track_can_also_be_flagged_duplicate(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]
+        tracks = [
+            _track("colmap::1", list(obs)),
+            _track("colmap::2", list(obs), structural_status="CONFLICT"),
+        ]
+        result = classify_exact_duplicates(tracks)
+        by_id = {t["track_id"]: t for t in result}
+        # both statuses coexist: still CONFLICT, ALSO flagged as a duplicate secondary
+        self.assertEqual(by_id["colmap::2"]["structural_status"], "CONFLICT")
+        self.assertEqual(by_id["colmap::2"]["duplicate_status"], "EXACT_DUPLICATE")
+        self.assertEqual(by_id["colmap::2"]["duplicate_of"], "colmap::1")
+
+    def test_does_not_mutate_input(self):
+        obs = [{"production_frame": 1, "x": 10.0, "y": 20.0, "image_name": "a.jpg"}]
+        tracks = [_track("colmap::1", list(obs)), _track("colmap::2", list(obs))]
+        classify_exact_duplicates(tracks)
+        self.assertEqual(tracks[1]["duplicate_status"], "UNIQUE")
+
+
+class TestIsExportable(unittest.TestCase):
+    def test_valid_unique_track_is_exportable(self):
+        self.assertTrue(is_exportable(_track("colmap::1", [])))
+
+    def test_conflict_track_is_not_exportable(self):
+        self.assertFalse(is_exportable(_track("colmap::1", [], structural_status="CONFLICT")))
+
+    def test_duplicate_secondary_is_not_exportable(self):
+        t = _track("colmap::1", [])
+        t["duplicate_status"] = "EXACT_DUPLICATE"
+        t["duplicate_of"] = "colmap::0"
+        self.assertFalse(is_exportable(t))
+
+
+class TestWriteStructuralQcReport(unittest.TestCase):
+    def test_reports_summary_counts(self):
+        import tempfile
+        tracks = [
+            _track("colmap::1", []),
+            _track("colmap::2", [], structural_status="CONFLICT"),
+            _track("colmap::3", [], structural_status="INVALID_COORDS"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("Total tracks: 3", content)
+        self.assertIn("CONFLICT: 1", content)
+        self.assertIn("INVALID_COORDS: 1", content)
+        self.assertIn("VALID: 1", content)
+
+    def test_lists_only_non_clean_tracks(self):
+        import tempfile
+        tracks = [
+            _track("colmap::1", []),
+            _track("colmap::2", [], structural_status="CONFLICT"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("colmap::2", content)
+        self.assertNotIn("colmap::1:", content)
+
+    def test_all_clean_reports_none(self):
+        import tempfile
+        tracks = [_track("colmap::1", [])]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("(none)", content)
+
+
+class TestLoadSceneClassification(unittest.TestCase):
+    def test_load_scene_returns_classified_tracks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = _make_scene(Path(tmp))
+            data = load_scene(str(scene_dir))
+            for t in data["tracks"]:
+                self.assertIn(t["structural_status"],
+                               ("VALID", "CONFLICT", "INVALID_COORDS",
+                                "INVALID_IMAGE_MISSING", "INVALID_FRAME"))
+                self.assertIn(t["duplicate_status"], ("UNIQUE", "EXACT_DUPLICATE"))
 
 
 if __name__ == "__main__":
