@@ -42,12 +42,17 @@ def load_image_size(cameras_path):
 
 def build_tracks(images_path):
     """Read sparse/0/images.txt and build persistent 2D tracks keyed by
-    COLMAP's POINT3D_ID. Returns (tracks, conflict_count):
-    - tracks: list of {"track_id","track_name","observations"} dicts,
-      sorted by track_id, each observations list sorted by production_frame.
-    - conflict_count: number of point3d_ids dropped because the same
-      (point3d_id, production_frame) pair appeared more than once.
-    POINT3D_ID == -1 (untriangulated 2D feature) is excluded."""
+    COLMAP's POINT3D_ID. Every track with a valid persistent identity
+    (POINT3D_ID != -1) is retained, including ones with a same-track/
+    same-frame conflict -- conflicting tracks get structural_status
+    "CONFLICT" and keep every raw, conflicting observation (never
+    averaged, never a single "winner" picked). Returns a list of track
+    dicts, sorted by track_id, each observations list sorted by
+    production_frame (a CONFLICT track may have multiple entries sharing
+    the same production_frame -- intentional). duplicate_status/
+    duplicate_of start at "UNIQUE"/None; classify_exact_duplicates refines
+    them. structural_status starts at "CONFLICT"/"VALID" only;
+    classify_structural_status refines "VALID" further."""
     observations_by_point = {}
     seen_frames_by_point = {}
     conflict_ids = set()
@@ -76,24 +81,26 @@ def build_tracks(images_path):
             seen = seen_frames_by_point.setdefault(point3d_id, set())
             if frame_num in seen:
                 conflict_ids.add(point3d_id)
-                continue
-            seen.add(frame_num)
-            observations_by_point.setdefault(point3d_id, []).append((frame_num, x, y))
+            else:
+                seen.add(frame_num)
+            observations_by_point.setdefault(point3d_id, []).append((frame_num, x, y, name))
 
     tracks = []
     for point3d_id, obs in observations_by_point.items():
-        if point3d_id in conflict_ids:
-            continue
         obs.sort(key=lambda o: o[0])
         tracks.append({
             "track_id": f"colmap::{point3d_id}",
             "track_name": f"p{point3d_id}",
             "observations": [
-                {"production_frame": f, "x": x, "y": y} for f, x, y in obs
+                {"production_frame": f, "x": x, "y": y, "image_name": name}
+                for f, x, y, name in obs
             ],
+            "structural_status": "CONFLICT" if point3d_id in conflict_ids else "VALID",
+            "duplicate_status": "UNIQUE",
+            "duplicate_of": None,
         })
     tracks.sort(key=lambda t: t["track_id"])
-    return tracks, len(conflict_ids)
+    return tracks
 
 
 def load_scene(scene_dir):
@@ -108,11 +115,11 @@ def load_scene(scene_dir):
         raise SceneLoadError(f"Not found: {images_path}")
 
     width, height = load_image_size(cameras_path)
-    tracks, conflict_count = build_tracks(images_path)
+    tracks = build_tracks(images_path)
 
     return {
         "width": width, "height": height,
-        "tracks": tracks, "conflict_count": conflict_count,
+        "tracks": tracks,
     }
 
 

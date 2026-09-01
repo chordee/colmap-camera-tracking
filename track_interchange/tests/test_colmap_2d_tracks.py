@@ -23,9 +23,6 @@ IMAGES_TXT = """# Image list with two lines of data per image:
 110.0 210.0 5 510.0 610.0 7
 """
 
-# Second fixture: frame 1 has point 5 twice at different pixel positions --
-# a same-track/same-frame conflict. Track 5 must be dropped entirely; track
-# 9 (conflict-free) must still come through.
 CAMERAS_TXT_MIXED_SIZES = """# Camera list with one line of data per camera:
 #   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]
 # Number of cameras: 2
@@ -33,6 +30,9 @@ CAMERAS_TXT_MIXED_SIZES = """# Camera list with one line of data per camera:
 2 SIMPLE_RADIAL 1280 720 800.0 640 360 0.0
 """
 
+# Second fixture: frame 1 has point 5 twice at different pixel positions --
+# a same-track/same-frame conflict. Track 5 must be retained with structural_status
+# "CONFLICT"; track 9 (conflict-free) must still come through with status "VALID".
 IMAGES_TXT_WITH_CONFLICT = """# Image list with two lines of data per image:
 #   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
 #   POINTS2D[] as (X, Y, POINT3D_ID)
@@ -76,9 +76,12 @@ class TestLoadScene(unittest.TestCase):
             track5 = next(t for t in data["tracks"] if t["track_id"] == "colmap::5")
             self.assertEqual(track5["track_name"], "p5")
             self.assertEqual(track5["observations"], [
-                {"production_frame": 1, "x": 100.0, "y": 200.0},
-                {"production_frame": 2, "x": 110.0, "y": 210.0},
+                {"production_frame": 1, "x": 100.0, "y": 200.0, "image_name": "frame_000001.jpg"},
+                {"production_frame": 2, "x": 110.0, "y": 210.0, "image_name": "frame_000002.jpg"},
             ])
+            self.assertEqual(track5["structural_status"], "VALID")
+            self.assertEqual(track5["duplicate_status"], "UNIQUE")
+            self.assertIsNone(track5["duplicate_of"])
 
     def test_excludes_point3d_id_negative_one(self):
         import tempfile
@@ -88,15 +91,24 @@ class TestLoadScene(unittest.TestCase):
             track_ids = [t["track_id"] for t in data["tracks"]]
             self.assertNotIn("colmap::-1", track_ids)
 
-    def test_same_frame_conflict_drops_track_and_is_counted(self):
+    def test_same_frame_conflict_retains_track_with_status(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             scene_dir = _make_scene(Path(tmp), images_txt=IMAGES_TXT_WITH_CONFLICT)
             data = load_scene(str(scene_dir))
             track_ids = [t["track_id"] for t in data["tracks"]]
-            self.assertNotIn("colmap::5", track_ids)
+            self.assertIn("colmap::5", track_ids)
             self.assertIn("colmap::9", track_ids)
-            self.assertEqual(data["conflict_count"], 1)
+            track5 = next(t for t in data["tracks"] if t["track_id"] == "colmap::5")
+            self.assertEqual(track5["structural_status"], "CONFLICT")
+            # both raw, conflicting observations for frame 1 are retained --
+            # never averaged, never a single "winner" picked.
+            self.assertEqual(track5["observations"], [
+                {"production_frame": 1, "x": 100.0, "y": 200.0, "image_name": "frame_000001.jpg"},
+                {"production_frame": 1, "x": 150.0, "y": 250.0, "image_name": "frame_000001.jpg"},
+            ])
+            track9 = next(t for t in data["tracks"] if t["track_id"] == "colmap::9")
+            self.assertEqual(track9["structural_status"], "VALID")
 
     def test_missing_cameras_txt_raises(self):
         import tempfile
