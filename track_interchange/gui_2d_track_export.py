@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (
 )
 
 from colmap_2d_tracks import (
-    SceneLoadError, filter_by_min_observations, load_scene, sample_tracks,
-    write_3de_2d_tracks_txt,
+    SceneLoadError, filter_by_min_observations, is_exportable, load_scene,
+    sample_tracks, write_3de_2d_tracks_txt, write_structural_qc_report,
 )
 
 
@@ -109,15 +109,16 @@ class MainWindow(QMainWindow):
             self.tracks_available.setText("Tracks available: (could not read scene)")
             return
         self._scene = scene
-        if scene["conflict_count"]:
-            self._log(f"[WARN] {scene['conflict_count']} track(s) dropped due to "
-                       f"same-frame conflicts.")
+        non_exportable = sum(1 for t in scene["tracks"] if not is_exportable(t))
+        if non_exportable:
+            self._log(f"[WARN] {non_exportable} of {len(scene['tracks'])} track(s) excluded "
+                       f"from export (not structurally valid, or an exact-duplicate secondary).")
         self._update_tracks_preview()
 
     def _update_tracks_preview(self):
         if self._scene is None:
             return
-        tracks = self._scene["tracks"]
+        tracks = [t for t in self._scene["tracks"] if is_exportable(t)]
         total = len(tracks)
         min_observations = self.min_observations.value()
         max_tracks = self.max_tracks.value()
@@ -166,23 +167,31 @@ class MainWindow(QMainWindow):
                 self._log(traceback.format_exc())
                 return
 
+        exportable_tracks = [t for t in scene["tracks"] if is_exportable(t)]
         min_observations = self.min_observations.value()
         max_tracks = self.max_tracks.value()
-        filtered_tracks = filter_by_min_observations(scene["tracks"], min_observations)
+        filtered_tracks = filter_by_min_observations(exportable_tracks, min_observations)
         tracks_to_export = sample_tracks(filtered_tracks, max_tracks)
 
         tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
+        qc_report_path = os.path.join(output_dir, f"{scene_name}_structural_qc.txt")
 
         try:
             os.makedirs(output_dir, exist_ok=True)
             write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, scene["height"], tracks_path)
+            write_structural_qc_report(scene["tracks"], qc_report_path)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export file:")
             self._log(traceback.format_exc())
             return
 
+        excluded = len(scene["tracks"]) - len(exportable_tracks)
+        if excluded:
+            self._log(f"Excluded {excluded} of {len(scene['tracks'])} tracks "
+                       f"(not structurally valid, or an exact-duplicate secondary) -- "
+                       f"see {qc_report_path}")
         if min_observations:
-            self._log(f"Kept {len(filtered_tracks)} of {len(scene['tracks'])} tracks "
+            self._log(f"Kept {len(filtered_tracks)} of {len(exportable_tracks)} exportable tracks "
                        f"with observations >= {min_observations}.")
         if len(tracks_to_export) < len(filtered_tracks):
             self._log(f"Exported {len(tracks_to_export)} of {len(filtered_tracks)} tracks "
