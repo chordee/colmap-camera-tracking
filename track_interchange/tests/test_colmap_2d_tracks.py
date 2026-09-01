@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates, is_exportable, write_structural_qc_report
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -440,6 +440,76 @@ class TestClassifyExactDuplicates(unittest.TestCase):
         tracks = [_track("colmap::1", list(obs)), _track("colmap::2", list(obs))]
         classify_exact_duplicates(tracks)
         self.assertEqual(tracks[1]["duplicate_status"], "UNIQUE")
+
+
+class TestIsExportable(unittest.TestCase):
+    def test_valid_unique_track_is_exportable(self):
+        self.assertTrue(is_exportable(_track("colmap::1", [])))
+
+    def test_conflict_track_is_not_exportable(self):
+        self.assertFalse(is_exportable(_track("colmap::1", [], structural_status="CONFLICT")))
+
+    def test_duplicate_secondary_is_not_exportable(self):
+        t = _track("colmap::1", [])
+        t["duplicate_status"] = "EXACT_DUPLICATE"
+        t["duplicate_of"] = "colmap::0"
+        self.assertFalse(is_exportable(t))
+
+
+class TestWriteStructuralQcReport(unittest.TestCase):
+    def test_reports_summary_counts(self):
+        import tempfile
+        tracks = [
+            _track("colmap::1", []),
+            _track("colmap::2", [], structural_status="CONFLICT"),
+            _track("colmap::3", [], structural_status="INVALID_COORDS"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("Total tracks: 3", content)
+        self.assertIn("CONFLICT: 1", content)
+        self.assertIn("INVALID_COORDS: 1", content)
+        self.assertIn("VALID: 1", content)
+
+    def test_lists_only_non_clean_tracks(self):
+        import tempfile
+        tracks = [
+            _track("colmap::1", []),
+            _track("colmap::2", [], structural_status="CONFLICT"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("colmap::2", content)
+        self.assertNotIn("colmap::1:", content)
+
+    def test_all_clean_reports_none(self):
+        import tempfile
+        tracks = [_track("colmap::1", [])]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "qc.txt")
+            write_structural_qc_report(tracks, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("(none)", content)
+
+
+class TestLoadSceneClassification(unittest.TestCase):
+    def test_load_scene_returns_classified_tracks(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            scene_dir = _make_scene(Path(tmp))
+            data = load_scene(str(scene_dir))
+            for t in data["tracks"]:
+                self.assertIn(t["structural_status"],
+                               ("VALID", "CONFLICT", "INVALID_COORDS",
+                                "INVALID_IMAGE_MISSING", "INVALID_FRAME"))
+                self.assertIn(t["duplicate_status"], ("UNIQUE", "EXACT_DUPLICATE"))
 
 
 if __name__ == "__main__":

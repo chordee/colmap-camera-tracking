@@ -184,9 +184,53 @@ def classify_exact_duplicates(tracks):
     return result
 
 
+def is_exportable(track):
+    """A track is eligible for 3DE export only if it's structurally clean
+    and not a duplicate secondary. (This predicate anticipates Issue 03's
+    formal "Production Candidate Pool" definition -- Persistent Track AND
+    structurally_valid AND non-conflict AND not EXACT_DUPLICATE -- applied
+    now since there's no reason to export known-bad or redundant data.)"""
+    return track["structural_status"] == "VALID" and track["duplicate_status"] == "UNIQUE"
+
+
+def write_structural_qc_report(tracks, out_path):
+    """Write a human-readable structural QC report: summary counts per
+    structural_status, an exact-duplicate count, then a listing of only
+    the non-clean tracks (not VALID, or an EXACT_DUPLICATE secondary) --
+    a full listing of every track would be unreadable at this pipeline's
+    real scale (100k+ tracks on a typical scene)."""
+    status_counts = {}
+    for t in tracks:
+        status_counts[t["structural_status"]] = status_counts.get(t["structural_status"], 0) + 1
+    duplicate_count = sum(1 for t in tracks if t["duplicate_status"] == "EXACT_DUPLICATE")
+
+    lines = [f"Total tracks: {len(tracks)}"]
+    for status in sorted(status_counts):
+        lines.append(f"  {status}: {status_counts[status]}")
+    lines.append(f"Exact duplicate tracks (secondaries): {duplicate_count}")
+    lines.append("")
+    lines.append("Non-clean tracks:")
+    non_clean = [
+        t for t in tracks
+        if t["structural_status"] != "VALID" or t["duplicate_status"] == "EXACT_DUPLICATE"
+    ]
+    if not non_clean:
+        lines.append("  (none)")
+    else:
+        for t in non_clean:
+            lines.append(
+                f"  {t['track_id']}: structural_status={t['structural_status']}, "
+                f"duplicate_status={t['duplicate_status']}, duplicate_of={t['duplicate_of']}"
+            )
+
+    with open(out_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
 def load_scene(scene_dir):
     """Read a processed COLMAP tracking scene folder's raw (undistorted-
-    pipeline-untouched) 2D feature observations and build persistent tracks."""
+    pipeline-untouched) 2D feature observations, build persistent tracks,
+    and classify each one's structural_status and duplicate_status."""
     cameras_path = os.path.join(scene_dir, "sparse", "0", "cameras.txt")
     images_path = os.path.join(scene_dir, "sparse", "0", "images.txt")
 
@@ -197,6 +241,8 @@ def load_scene(scene_dir):
 
     width, height = load_image_size(cameras_path)
     tracks = build_tracks(images_path)
+    tracks = classify_structural_status(tracks, scene_dir, width, height)
+    tracks = classify_exact_duplicates(tracks)
 
     return {
         "width": width, "height": height,
