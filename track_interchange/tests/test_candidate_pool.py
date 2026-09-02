@@ -1,10 +1,12 @@
 import sys
 import unittest
+import json
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from candidate_pool import build_production_candidate_pool, analyze_track_quality, build_temporal_coverage_audit, build_spatial_coverage_audit
+from candidate_pool import build_production_candidate_pool, analyze_track_quality, build_temporal_coverage_audit, build_spatial_coverage_audit, write_track_analysis_report, write_candidate_coverage_json
 
 
 def _track(track_id, observations, structural_status="VALID", duplicate_status="UNIQUE", duplicate_of=None):
@@ -241,6 +243,63 @@ class TestBuildSpatialCoverageAudit(unittest.TestCase):
         self.assertEqual(result["candidate_observations_per_region"], {})
         self.assertIsNone(result["dominant_candidate_region"])
         self.assertEqual(result["occupied_spatial_cells_3x3"], {})
+
+
+class TestWriteTrackAnalysisReport(unittest.TestCase):
+    def test_reports_pool_size_and_aggregate_stats(self):
+        pool = [_pool_track("colmap::1", [1, 2, 3]), _pool_track("colmap::2", [1, 5])]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "analysis.txt")
+            write_track_analysis_report(pool, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("Candidate pool size: 2", content)
+        self.assertIn("observation_count:", content)
+
+    def test_lists_every_candidate_track(self):
+        pool = [_pool_track("colmap::1", [1, 2]), _pool_track("colmap::2", [3])]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "analysis.txt")
+            write_track_analysis_report(pool, out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("colmap::1", content)
+        self.assertIn("colmap::2", content)
+
+    def test_empty_pool_reports_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "analysis.txt")
+            write_track_analysis_report([], out_path)
+            with open(out_path) as f:
+                content = f.read()
+        self.assertIn("Candidate pool size: 0", content)
+
+
+class TestWriteCandidateCoverageJson(unittest.TestCase):
+    def test_writes_valid_json_with_expected_top_level_keys(self):
+        pool = [_pool_track("colmap::1", [1, 2, 3])]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "coverage.json")
+            write_candidate_coverage_json(pool, width=900, height=900, out_path=out_path)
+            with open(out_path) as f:
+                data = json.load(f)
+        self.assertEqual(data["candidate_pool_size"], 1)
+        self.assertEqual(data["width"], 900)
+        self.assertEqual(data["height"], 900)
+        self.assertIn("temporal", data)
+        self.assertIn("spatial", data)
+        self.assertEqual(data["temporal"]["frame_min"], 1)
+        self.assertIn("reachable_spatial_regions", data["spatial"])
+
+    def test_boundary_window_is_passed_through(self):
+        pool = [_pool_track("colmap::1", list(range(1, 31)))]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "coverage.json")
+            write_candidate_coverage_json(pool, width=900, height=900, out_path=out_path, boundary_window=3)
+            with open(out_path) as f:
+                data = json.load(f)
+        # with boundary_window=3, opening window is frames 1-3, all with exactly 1 active
+        self.assertEqual(data["temporal"]["opening_boundary_minimum"], 1)
 
 
 if __name__ == "__main__":

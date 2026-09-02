@@ -1,3 +1,5 @@
+import json
+
 from colmap_2d_tracks import is_exportable
 
 
@@ -188,3 +190,47 @@ def build_spatial_coverage_audit(candidate_tracks, width, height):
         "candidate_observations_per_region": candidate_observations_per_region,
         "dominant_candidate_region": dominant_candidate_region,
     }
+
+
+def write_track_analysis_report(candidate_tracks, out_path):
+    """Human-readable Track Quality Analysis report (AGENTS_MASTER.md
+    section 11): candidate pool size, aggregate min/median/max per metric,
+    then a per-track listing. Analysis/diagnostic only."""
+    analyses = [analyze_track_quality(t) for t in candidate_tracks]
+
+    lines = [f"Candidate pool size: {len(analyses)}"]
+    if analyses:
+        for key in ("observation_count", "temporal_span", "actual_observation_coverage",
+                    "gap_count", "max_gap"):
+            values = [a[key] for a in analyses]
+            lines.append(f"  {key}: min={min(values)}, median={_median(values)}, max={max(values)}")
+
+    lines.append("")
+    lines.append("Per-track analysis:")
+    for a in analyses:
+        lines.append(
+            f"  {a['track_id']}: observation_count={a['observation_count']}, "
+            f"first_frame={a['first_frame']}, last_frame={a['last_frame']}, "
+            f"temporal_span={a['temporal_span']}, "
+            f"actual_observation_coverage={a['actual_observation_coverage']:.4f}, "
+            f"gap_count={a['gap_count']}, max_gap={a['max_gap']}"
+        )
+
+    with open(out_path, "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def write_candidate_coverage_json(candidate_tracks, width, height, out_path, boundary_window=10):
+    """Machine-readable Candidate Coverage Pre-Audit (AGENTS_MASTER.md
+    section 14): temporal + spatial, combined with candidate_pool_size and
+    scene dimensions for context."""
+    payload = {
+        "candidate_pool_size": len(candidate_tracks),
+        "width": width,
+        "height": height,
+        "temporal": build_temporal_coverage_audit(candidate_tracks, boundary_window=boundary_window),
+        "spatial": build_spatial_coverage_audit(candidate_tracks, width, height),
+    }
+    with open(out_path, "w", newline="\n") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
