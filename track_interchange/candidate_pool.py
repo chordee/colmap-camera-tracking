@@ -86,6 +86,9 @@ def build_temporal_coverage_audit(candidate_tracks, boundary_window=10):
     supplied shot range). boundary_window is the number of frames from each
     end of the range used for opening_boundary_minimum /
     ending_boundary_minimum."""
+    if boundary_window < 1:
+        raise ValueError("boundary_window must be at least 1")
+
     active_by_frame = {}
     for t in candidate_tracks:
         for obs in t["observations"]:
@@ -158,8 +161,12 @@ def build_spatial_coverage_audit(candidate_tracks, width, height):
     image into a uniform 3x3 grid (cells 0-8, row-major). Per-frame detail
     is summarized as the occupied-cell COUNT (not a full per-cell
     breakdown) -- full per-frame per-cell detail would be excessive at this
-    pipeline's real scale. Global (not-per-frame) statistics are exact and
-    never assume all 9 cells are reachable."""
+    pipeline's real scale. occupied_spatial_cells_3x3 covers every frame in
+    the pool's observed min..max range (0 for frames with no candidate
+    observations at all), matching build_temporal_coverage_audit's
+    active_candidate_tracks shape -- a keyed consumer can't otherwise tell
+    an empty frame from missing data. Global (not-per-frame) statistics are
+    exact and never assume all 9 cells are reachable."""
     per_frame_cells = {}
     region_totals = {}
 
@@ -170,7 +177,15 @@ def build_spatial_coverage_audit(candidate_tracks, width, height):
             per_frame_cells.setdefault(f, set()).add(idx)
             region_totals[idx] = region_totals.get(idx, 0) + 1
 
-    occupied_spatial_cells_3x3 = {str(f): len(cells) for f, cells in per_frame_cells.items()}
+    if per_frame_cells:
+        frame_min = min(per_frame_cells)
+        frame_max = max(per_frame_cells)
+        occupied_spatial_cells_3x3 = {
+            str(f): len(per_frame_cells.get(f, set()))
+            for f in range(frame_min, frame_max + 1)
+        }
+    else:
+        occupied_spatial_cells_3x3 = {}
     reachable_spatial_regions = sorted(region_totals)
     candidate_observations_per_region = {str(idx): region_totals[idx] for idx in reachable_spatial_regions}
 

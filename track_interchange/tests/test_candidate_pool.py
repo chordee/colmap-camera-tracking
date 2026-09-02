@@ -184,6 +184,11 @@ class TestBuildTemporalCoverageAudit(unittest.TestCase):
         self.assertEqual(result["max_simultaneous"], 0)
         self.assertEqual(result["median_simultaneous"], 0)
 
+    def test_boundary_window_zero_raises(self):
+        pool = [_pool_track("colmap::1", [1, 2, 3])]
+        with self.assertRaises(ValueError):
+            build_temporal_coverage_audit(pool, boundary_window=0)
+
 
 def _obs_track(track_id, obs_list):
     return _track(track_id, obs_list)
@@ -243,6 +248,17 @@ class TestBuildSpatialCoverageAudit(unittest.TestCase):
         self.assertEqual(result["candidate_observations_per_region"], {})
         self.assertIsNone(result["dominant_candidate_region"])
         self.assertEqual(result["occupied_spatial_cells_3x3"], {})
+
+    def test_frame_with_no_candidates_gets_zero_entry(self):
+        # observations only at frames 1 and 3 -- frame 2 has zero candidates
+        # but must still appear as an explicit 0, matching
+        # build_temporal_coverage_audit's active_candidate_tracks shape.
+        pool = [_obs_track("colmap::1", [
+            {"production_frame": 1, "x": 0.0, "y": 0.0, "image_name": "a.jpg"},
+            {"production_frame": 3, "x": 0.0, "y": 0.0, "image_name": "a.jpg"},
+        ])]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        self.assertEqual(result["occupied_spatial_cells_3x3"], {"1": 1, "2": 0, "3": 1})
 
 
 class TestWriteTrackAnalysisReport(unittest.TestCase):
