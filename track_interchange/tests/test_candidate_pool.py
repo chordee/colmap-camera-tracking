@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from candidate_pool import build_production_candidate_pool, analyze_track_quality
+from candidate_pool import build_production_candidate_pool, analyze_track_quality, build_temporal_coverage_audit
 
 
 def _track(track_id, observations, structural_status="VALID", duplicate_status="UNIQUE", duplicate_of=None):
@@ -85,6 +85,102 @@ class TestAnalyzeTrackQuality(unittest.TestCase):
         result = analyze_track_quality(track)
         self.assertEqual(result["first_frame"], 1)
         self.assertEqual(result["last_frame"], 7)
+
+
+def _pool_track(track_id, frames):
+    return _track(track_id, [
+        {"production_frame": f, "x": 1.0, "y": 1.0, "image_name": "a.jpg"} for f in frames
+    ])
+
+
+class TestBuildTemporalCoverageAudit(unittest.TestCase):
+    def test_frame_range_matches_observed_min_max(self):
+        pool = [_pool_track("colmap::1", [3, 4, 5])]
+        result = build_temporal_coverage_audit(pool)
+        self.assertEqual(result["frame_min"], 3)
+        self.assertEqual(result["frame_max"], 5)
+        self.assertEqual(result["active_candidate_tracks"], {"3": 1, "4": 1, "5": 1})
+
+    def test_zero_active_frames_included_in_range(self):
+        # two tracks covering frames 1 and 3, frame 2 has no candidate at all
+        pool = [_pool_track("colmap::1", [1]), _pool_track("colmap::2", [3])]
+        result = build_temporal_coverage_audit(pool)
+        self.assertEqual(result["active_candidate_tracks"], {"1": 1, "2": 0, "3": 1})
+        self.assertEqual(result["frames_with_0_active"], 1)
+
+    def test_bucket_boundaries(self):
+        # frame 1: exactly 2 active -> 1_2 bucket
+        # frame 2: exactly 3 active -> 3_5 bucket
+        # frame 3: exactly 7 active -> 6_7 bucket
+        # frame 4: exactly 8 active -> 8_plus bucket
+        pool = []
+        for i in range(2):
+            pool.append(_pool_track(f"colmap::a{i}", [1]))
+        for i in range(3):
+            pool.append(_pool_track(f"colmap::b{i}", [2]))
+        for i in range(7):
+            pool.append(_pool_track(f"colmap::c{i}", [3]))
+        for i in range(8):
+            pool.append(_pool_track(f"colmap::d{i}", [4]))
+        result = build_temporal_coverage_audit(pool)
+        self.assertEqual(result["frames_with_1_2"], 1)
+        self.assertEqual(result["frames_with_3_5"], 1)
+        self.assertEqual(result["frames_with_6_7"], 1)
+        self.assertEqual(result["frames_with_8_plus"], 1)
+        self.assertEqual(result["frames_with_0_active"], 0)
+
+    def test_min_median_max_simultaneous(self):
+        pool = [_pool_track("colmap::1", [1, 2]), _pool_track("colmap::2", [2])]
+        # frame 1: 1 active, frame 2: 2 active
+        result = build_temporal_coverage_audit(pool)
+        self.assertEqual(result["min_simultaneous"], 1)
+        self.assertEqual(result["max_simultaneous"], 2)
+        self.assertEqual(result["median_simultaneous"], 1.5)
+
+    def test_longest_zero_track_range(self):
+        # frames 1 and 10 have a candidate; 2-9 (8 frames) have none
+        pool = [_pool_track("colmap::1", [1]), _pool_track("colmap::2", [10])]
+        result = build_temporal_coverage_audit(pool)
+        self.assertEqual(result["longest_zero_track_range"],
+                          {"start_frame": 2, "end_frame": 9, "length": 8})
+
+    def test_longest_low_support_range_threshold_is_2(self):
+        # frame 1: 1 active, frame 2: 2 active, frame 3: 2 active, frame 4: 3 active (not low)
+        pool = [_pool_track("colmap::a", [1]),
+                _pool_track("colmap::b", [2]), _pool_track("colmap::c", [2]),
+                _pool_track("colmap::d", [3]), _pool_track("colmap::e", [3]),
+                _pool_track("colmap::f", [4]), _pool_track("colmap::g", [4]), _pool_track("colmap::h", [4])]
+        result = build_temporal_coverage_audit(pool)
+        # frames 1(1),2(2),3(2),4(3): low-support (<=2) run is frames 1-3, length 3
+        self.assertEqual(result["longest_low_support_range"],
+                          {"start_frame": 1, "end_frame": 3, "length": 3})
+
+    def test_boundary_window_shorter_than_range_does_not_crash(self):
+        # range of only 3 frames, boundary_window default 10
+        pool = [_pool_track("colmap::1", [1, 2, 3])]
+        result = build_temporal_coverage_audit(pool, boundary_window=10)
+        self.assertEqual(result["opening_boundary_minimum"], 1)
+        self.assertEqual(result["ending_boundary_minimum"], 1)
+
+    def test_opening_and_ending_boundary_minimum(self):
+        # base track covers frames 1..20 with exactly 1 active each; two extra
+        # observations bump frame 3 and frame 20 to 2 active, but the window
+        # minimum must still be 1 (from the other frames in each window).
+        pool = [_pool_track("colmap::1", list(range(1, 21)))]
+        pool.append(_pool_track("colmap::2", [3]))
+        pool.append(_pool_track("colmap::3", [20]))
+        result = build_temporal_coverage_audit(pool, boundary_window=5)
+        self.assertEqual(result["opening_boundary_minimum"], 1)
+        self.assertEqual(result["ending_boundary_minimum"], 1)
+
+    def test_empty_pool_returns_empty_range(self):
+        result = build_temporal_coverage_audit([])
+        self.assertIsNone(result["frame_min"])
+        self.assertIsNone(result["frame_max"])
+        self.assertEqual(result["active_candidate_tracks"], {})
+        self.assertEqual(result["min_simultaneous"], 0)
+        self.assertEqual(result["max_simultaneous"], 0)
+        self.assertEqual(result["median_simultaneous"], 0)
 
 
 if __name__ == "__main__":
