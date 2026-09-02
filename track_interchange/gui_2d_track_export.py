@@ -3,7 +3,7 @@ import sys
 import traceback
 
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
     QSpinBox, QFormLayout,
 )
@@ -12,6 +12,7 @@ from colmap_2d_tracks import (
     SceneLoadError, filter_by_min_observations, is_exportable, load_scene,
     sample_tracks, write_3de_2d_tracks_txt, write_structural_qc_report,
 )
+from candidate_pool import write_candidate_coverage_json, write_track_analysis_report
 
 
 class PathPicker(QWidget):
@@ -78,6 +79,12 @@ class MainWindow(QMainWindow):
         self.max_tracks.setSpecialValueText("No limit")
         self.max_tracks.valueChanged.connect(self._update_tracks_preview)
         form.addRow("Max tracks (0 = no limit):", self.max_tracks)
+
+        self.pre_audit_checkbox = QCheckBox(
+            "Generate candidate coverage pre-audit (may slow down export for large scenes)"
+        )
+        self.pre_audit_checkbox.setChecked(True)
+        form.addRow("", self.pre_audit_checkbox)
 
         layout.addLayout(form)
 
@@ -179,11 +186,19 @@ class MainWindow(QMainWindow):
 
         tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
         qc_report_path = os.path.join(output_dir, f"{scene_name}_structural_qc.txt")
+        analysis_path = os.path.join(output_dir, f"{scene_name}_track_analysis.txt")
+        coverage_path = os.path.join(output_dir, f"{scene_name}_candidate_coverage_pre_selection.json")
 
         try:
             os.makedirs(output_dir, exist_ok=True)
             write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, scene["height"], tracks_path)
             write_structural_qc_report(scene["tracks"], qc_report_path)
+            if self.pre_audit_checkbox.isChecked():
+                # exportable_tracks IS the Production Candidate Pool (Issue 03) --
+                # is_exportable() and build_production_candidate_pool() apply the
+                # identical predicate; reuse rather than recompute.
+                write_track_analysis_report(exportable_tracks, analysis_path)
+                write_candidate_coverage_json(exportable_tracks, scene["width"], scene["height"], coverage_path)
         except Exception:
             self._log("[ERROR] Unexpected error while writing export file:")
             self._log(traceback.format_exc())
@@ -202,6 +217,9 @@ class MainWindow(QMainWindow):
                        f"(randomly sampled) to: {tracks_path}")
         else:
             self._log(f"Exported {len(tracks_to_export)} tracks to: {tracks_path}")
+        if self.pre_audit_checkbox.isChecked():
+            self._log(f"Wrote track analysis report to: {analysis_path}")
+            self._log(f"Wrote candidate coverage pre-audit to: {coverage_path}")
         self._log("")
         self._log("Next steps:")
         self._log("1. In 3DE, use the 2D Tracks import feature (Object Browser or "
