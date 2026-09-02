@@ -186,6 +186,8 @@ class MainWindow(QMainWindow):
 
         tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
         qc_report_path = os.path.join(output_dir, f"{scene_name}_structural_qc.txt")
+        analysis_path = os.path.join(output_dir, f"{scene_name}_track_analysis.txt")
+        coverage_path = os.path.join(output_dir, f"{scene_name}_candidate_coverage_pre_selection.json")
 
         try:
             os.makedirs(output_dir, exist_ok=True)
@@ -195,8 +197,6 @@ class MainWindow(QMainWindow):
                 # exportable_tracks IS the Production Candidate Pool (Issue 03) --
                 # is_exportable() and build_production_candidate_pool() apply the
                 # identical predicate; reuse rather than recompute.
-                analysis_path = os.path.join(output_dir, f"{scene_name}_track_analysis.txt")
-                coverage_path = os.path.join(output_dir, f"{scene_name}_candidate_coverage_pre_selection.json")
                 write_track_analysis_report(exportable_tracks, analysis_path)
                 write_candidate_coverage_json(exportable_tracks, scene["width"], scene["height"], coverage_path)
         except Exception:
@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         else:
             self._log(f"Exported {len(tracks_to_export)} tracks to: {tracks_path}")
         if self.pre_audit_checkbox.isChecked():
+            self._log(f"Wrote track analysis report to: {analysis_path}")
             self._log(f"Wrote candidate coverage pre-audit to: {coverage_path}")
         self._log("")
         self._log("Next steps:")
