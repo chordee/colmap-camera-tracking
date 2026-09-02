@@ -137,3 +137,54 @@ def build_temporal_coverage_audit(candidate_tracks, boundary_window=10):
         "opening_boundary_minimum": min(active_by_frame.get(f, 0) for f in opening_frames),
         "ending_boundary_minimum": min(active_by_frame.get(f, 0) for f in ending_frames),
     }
+
+
+def _cell_index(x, y, width, height):
+    """3x3 grid cell index (0-8, row-major) for a coordinate. Clips to the
+    valid 0-8 range defensively; candidate-pool observations are already
+    coordinate-domain-valid (structural_status VALID), so clipping should
+    never actually trigger in practice."""
+    cell_w = width / 3
+    cell_h = height / 3
+    col = min(max(int(x // cell_w), 0), 2) if cell_w > 0 else 0
+    row = min(max(int(y // cell_h), 0), 2) if cell_h > 0 else 0
+    return row * 3 + col
+
+
+def build_spatial_coverage_audit(candidate_tracks, width, height):
+    """AGENTS_MASTER.md section 14, Spatial Candidate Support. Splits the
+    image into a uniform 3x3 grid (cells 0-8, row-major). Per-frame detail
+    is summarized as the occupied-cell COUNT (not a full per-cell
+    breakdown) -- full per-frame per-cell detail would be excessive at this
+    pipeline's real scale. Global (not-per-frame) statistics are exact and
+    never assume all 9 cells are reachable."""
+    per_frame_cells = {}
+    region_totals = {}
+
+    for t in candidate_tracks:
+        for obs in t["observations"]:
+            idx = _cell_index(obs["x"], obs["y"], width, height)
+            f = obs["production_frame"]
+            per_frame_cells.setdefault(f, set()).add(idx)
+            region_totals[idx] = region_totals.get(idx, 0) + 1
+
+    occupied_spatial_cells_3x3 = {str(f): len(cells) for f, cells in per_frame_cells.items()}
+    reachable_spatial_regions = sorted(region_totals)
+    candidate_observations_per_region = {str(idx): region_totals[idx] for idx in reachable_spatial_regions}
+
+    dominant_candidate_region = None
+    if reachable_spatial_regions:
+        total_reachable_obs = sum(region_totals.values())
+        best_idx = max(reachable_spatial_regions, key=lambda idx: region_totals[idx])
+        dominant_candidate_region = {
+            "cell_index": best_idx,
+            "observation_count": region_totals[best_idx],
+            "share_of_reachable": region_totals[best_idx] / total_reachable_obs,
+        }
+
+    return {
+        "occupied_spatial_cells_3x3": occupied_spatial_cells_3x3,
+        "reachable_spatial_regions": reachable_spatial_regions,
+        "candidate_observations_per_region": candidate_observations_per_region,
+        "dominant_candidate_region": dominant_candidate_region,
+    }

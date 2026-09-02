@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from candidate_pool import build_production_candidate_pool, analyze_track_quality, build_temporal_coverage_audit
+from candidate_pool import build_production_candidate_pool, analyze_track_quality, build_temporal_coverage_audit, build_spatial_coverage_audit
 
 
 def _track(track_id, observations, structural_status="VALID", duplicate_status="UNIQUE", duplicate_of=None):
@@ -181,6 +181,66 @@ class TestBuildTemporalCoverageAudit(unittest.TestCase):
         self.assertEqual(result["min_simultaneous"], 0)
         self.assertEqual(result["max_simultaneous"], 0)
         self.assertEqual(result["median_simultaneous"], 0)
+
+
+def _obs_track(track_id, obs_list):
+    return _track(track_id, obs_list)
+
+
+class TestBuildSpatialCoverageAudit(unittest.TestCase):
+    def test_corner_and_center_cells(self):
+        # 900x900 image -> 300x300 cells. cell index = row*3+col.
+        pool = [_obs_track("colmap::1", [
+            {"production_frame": 1, "x": 0.0, "y": 0.0, "image_name": "a.jpg"},      # cell 0 (top-left)
+            {"production_frame": 1, "x": 450.0, "y": 450.0, "image_name": "a.jpg"},  # cell 4 (center)
+            {"production_frame": 1, "x": 899.0, "y": 899.0, "image_name": "a.jpg"},  # cell 8 (bottom-right)
+        ])]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        self.assertEqual(result["reachable_spatial_regions"], [0, 4, 8])
+        self.assertEqual(result["occupied_spatial_cells_3x3"], {"1": 3})
+
+    def test_exact_cell_boundary_belongs_to_next_cell(self):
+        # width=900 -> cell_w=300. x=300.0 exactly is the boundary -> col 1, not col 0.
+        pool = [_obs_track("colmap::1", [
+            {"production_frame": 1, "x": 300.0, "y": 0.0, "image_name": "a.jpg"},
+        ])]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        self.assertEqual(result["reachable_spatial_regions"], [1])
+
+    def test_unreached_region_excluded_not_zero(self):
+        # only cell 0 ever gets an observation; cells 1-8 must not appear at all
+        pool = [_obs_track("colmap::1", [
+            {"production_frame": 1, "x": 0.0, "y": 0.0, "image_name": "a.jpg"},
+        ])]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        self.assertEqual(result["reachable_spatial_regions"], [0])
+        self.assertNotIn("1", result["candidate_observations_per_region"])
+        self.assertNotIn(1, result["candidate_observations_per_region"])
+
+    def test_candidate_observations_per_region_counts(self):
+        pool = [_obs_track("colmap::1", [
+            {"production_frame": f, "x": 0.0, "y": 0.0, "image_name": "a.jpg"} for f in (1, 2, 3)
+        ])]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        self.assertEqual(result["candidate_observations_per_region"], {"0": 3})
+
+    def test_dominant_candidate_region(self):
+        pool = [
+            _obs_track("colmap::1", [{"production_frame": f, "x": 0.0, "y": 0.0, "image_name": "a.jpg"} for f in range(5)]),
+            _obs_track("colmap::2", [{"production_frame": 1, "x": 450.0, "y": 450.0, "image_name": "a.jpg"}]),
+        ]
+        result = build_spatial_coverage_audit(pool, width=900, height=900)
+        dominant = result["dominant_candidate_region"]
+        self.assertEqual(dominant["cell_index"], 0)
+        self.assertEqual(dominant["observation_count"], 5)
+        self.assertAlmostEqual(dominant["share_of_reachable"], 5 / 6)
+
+    def test_empty_pool_returns_no_reachable_regions(self):
+        result = build_spatial_coverage_audit([], width=900, height=900)
+        self.assertEqual(result["reachable_spatial_regions"], [])
+        self.assertEqual(result["candidate_observations_per_region"], {})
+        self.assertIsNone(result["dominant_candidate_region"])
+        self.assertEqual(result["occupied_spatial_cells_3x3"], {})
 
 
 if __name__ == "__main__":
