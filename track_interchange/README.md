@@ -34,16 +34,26 @@ uv run track_interchange/gui_2d_track_export.py
 3. **Production start frame** — the frame number your 3DE shot's first
    frame corresponds to (used to remap COLMAP's frame numbers, parsed from
    image filenames, onto 3DE's 1-based sequence frame numbers).
-4. **Min observations / Max tracks** — optional thresholds. *Min
-   observations* drops tracks that exist for fewer frames (a short-lived
-   track is more likely a spurious COLMAP match). *Max tracks* randomly
-   samples down to a cap, useful when a scene has far more tracks than are
-   practical to import at once. Both are live-previewed against the
-   **exportable** track count (see Structural QC below) before you export.
-5. **Export** — writes two files to the output folder:
+4. **Min observations / Max tracks** — optional thresholds, both default to
+   **0 (no filter / no limit)**. With the defaults, every track in the
+   Production Candidate Pool (see Structural QC below) is exported —
+   nothing is sampled or dropped unless you explicitly set one of these.
+   *Min observations* drops tracks that exist for fewer frames (a
+   short-lived track is more likely a spurious COLMAP match). *Max tracks*
+   randomly samples down to a cap, useful when a scene has far more tracks
+   than are practical to import at once. Both are live-previewed against
+   the **exportable** track count before you export.
+5. **Generate candidate coverage pre-audit** — optional, default checked.
+   May slow down export on large scenes (it does a full pass over every
+   candidate track's observations). See Production Candidate Pool below.
+6. **Export** — writes files to the output folder:
    - `<scene_name>_2d_tracks.txt` — the 3DE-native 2D Tracks file, ready to
      import.
    - `<scene_name>_structural_qc.txt` — a QC report (see below).
+   - `<scene_name>_track_analysis.txt` and
+     `<scene_name>_candidate_coverage_pre_selection.json` — written only if
+     the pre-audit checkbox is checked (see Production Candidate Pool
+     below).
 
 ## Structural QC and Exact Duplicate filtering
 
@@ -71,6 +81,59 @@ A track is only ever written to `<scene_name>_2d_tracks.txt` if
 track that fails either check is retained internally (never silently
 dropped) and listed by name in `<scene_name>_structural_qc.txt`, along with
 summary counts, so you can see exactly what was excluded and why.
+
+This is the *only* automatic exclusion this tool performs. It exists
+because the excluded tracks are structurally broken data (a same-frame
+conflict, an out-of-bounds coordinate, a missing source image, an
+exact-duplicate observation sequence) — not a judgment call about which
+tracks are "good enough" to keep. Combined with the Min observations / Max
+tracks defaults above, the tool's default behavior is to pass through
+100% of the structurally valid, non-duplicate track set, with every
+exclusion fully accounted for in the QC report.
+
+## Production Candidate Pool and Coverage Pre-Audit
+
+`candidate_pool.py` builds on the structural/duplicate classification above
+to answer a different question: before any selection or budget logic runs
+(that's future work), how much real candidate support does the scene
+actually have, frame by frame and region by region?
+
+- **Production Candidate Pool** — `build_production_candidate_pool` selects
+  exactly the same tracks as `is_exportable` (structurally valid, non-
+  conflict, non-duplicate). It's a separate, named entry point so future
+  selection/budget logic has a stable pool to build on, without depending
+  on the export-filter function by name.
+- **Track Quality Analysis** — `analyze_track_quality` computes, per
+  candidate track: observation count, first/last frame, temporal span,
+  observation coverage (`observation_count / temporal_span`), and gap
+  count/size. This is descriptive only — nothing here ever excludes a
+  track from the pool or from export.
+- **Candidate Coverage Pre-Audit** — `build_temporal_coverage_audit` and
+  `build_spatial_coverage_audit` measure, across the whole candidate pool:
+  how many candidate tracks are active per frame (with bucketed
+  histograms, longest zero-coverage/low-support runs, and boundary
+  minimums), and which regions of a 3x3 image-space grid ever have
+  candidate support at all. This tells you whether a future selection
+  stage's shortfalls come from thin upstream data or from the selection
+  itself.
+
+Both are written to disk by the GUI's pre-audit checkbox above, or
+callable directly — see `write_track_analysis_report` and
+`write_candidate_coverage_json`.
+
+## Validation
+
+Every change to this tool's export format has been verified by actually
+importing the output into a real 3DEqualizer4 install, not just by
+passing this project's own unit tests. This distinction matters: a file
+that satisfies this project's own parser/writer round-trip tests can still
+fail (or succeed with silently wrong geometry) when handed to the real
+target software — this has happened during development here more than
+once (a missing Y-axis flip that would have produced a mirrored-but-valid
+import; a missing `setCurrentCamera`/`setCurrentPGroup` call that left an
+imported camera with no visible animation despite importing without
+error). Passing this project's tests means the parser-level contract is
+met; it does not by itself mean a real 3DE import will look correct.
 
 ## Using `colmap_2d_tracks.py` directly
 
