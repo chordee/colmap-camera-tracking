@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates, is_exportable, write_structural_qc_report
+from colmap_2d_tracks import SceneLoadError, load_scene, filter_by_min_observations, sample_tracks, write_3de_2d_tracks_txt, classify_structural_status, classify_exact_duplicates, is_exportable, write_structural_qc_report, write_pftrack_2d_tracks_txt
 
 
 CAMERAS_TXT = """# Camera list with one line of data per camera:
@@ -333,6 +333,120 @@ class TestWrite3deTracksTxt(unittest.TestCase):
             out_path = str(Path(tmp) / "tracks.txt")
             with self.assertRaises(ValueError):
                 write_3de_2d_tracks_txt(tracks, production_start_frame=5, image_height=1080, out_path=out_path)
+
+
+class TestWritePFTrackTracksTxt(unittest.TestCase):
+    def _tracks(self):
+        return [
+            {"track_id": "colmap::5", "track_name": "p5", "observations": [
+                {"production_frame": 1, "x": 100.0, "y": 200.0},
+                {"production_frame": 2, "x": 110.0, "y": 210.0},
+            ]},
+            {"track_id": "colmap::7", "track_name": "p7", "observations": [
+                {"production_frame": 1, "x": 500.0, "y": 600.0},
+            ]},
+        ]
+
+    def test_exact_structure(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt(self._tracks(), production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        self.assertEqual(lines[0], '# "Name"')
+        self.assertEqual(lines[1], "# clipNumber")
+        self.assertEqual(lines[2], "# frameCount")
+        self.assertEqual(lines[3], "# frame, xpos, ypos, similarity")
+        self.assertEqual(lines[4], "")               # blank line separates track blocks
+        self.assertEqual(lines[5], '"p5"')           # quoted native track name
+        self.assertEqual(lines[6], "1")              # clipNumber
+        self.assertEqual(lines[7], "2")              # frameCount for p5
+        # y_pf = image_height - y_colmap: 1080-200=880, 1080-210=870
+        self.assertEqual(lines[8], "1 100.000000000000000 880.000000000000000 1.000000")
+        self.assertEqual(lines[9], "2 110.000000000000000 870.000000000000000 1.000000")
+        self.assertEqual(lines[10], "")
+        self.assertEqual(lines[11], '"p7"')
+        self.assertEqual(lines[12], "1")
+        self.assertEqual(lines[13], "1")             # frameCount for p7
+        # y_pf = 1080 - 600 = 480
+        self.assertEqual(lines[14], "1 500.000000000000000 480.000000000000000 1.000000")
+        self.assertEqual(len(lines), 15)
+
+    def test_crlf_line_endings(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt(self._tracks(), production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path, "rb") as f:
+                data = f.read()
+        self.assertNotIn(b"\r\r", data)
+        self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))
+
+    def test_production_start_frame_offset(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1001, "x": 1.0, "y": 2.0},
+            {"production_frame": 1005, "x": 3.0, "y": 4.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt(tracks, production_start_frame=1001, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # pftrack_frame = production_frame - production_start_frame + 1
+        self.assertTrue(lines[8].startswith("1 "))   # 1001 - 1001 + 1 = 1
+        self.assertTrue(lines[9].startswith("5 "))   # 1005 - 1001 + 1 = 5
+
+    def test_y_is_flipped_to_bottom_up_convention(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::1", "track_name": "p1", "observations": [
+            {"production_frame": 1, "x": 100.0, "y": 300.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt(tracks, production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # y_pf = image_height - y_colmap = 1080 - 300.0 = 780.0
+        self.assertEqual(lines[8], "1 100.000000000000000 780.000000000000000 1.000000")
+
+    def test_natural_gaps_not_filled(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1, "x": 0.0, "y": 0.0},
+            {"production_frame": 2, "x": 0.0, "y": 0.0},
+            {"production_frame": 7, "x": 0.0, "y": 0.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt(tracks, production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        # frameCount must be 3 (actual rows), not 7 (frame span)
+        self.assertEqual(lines[7], "3")
+        self.assertEqual(len(lines), 8 + 3)
+
+    def test_empty_track_list_writes_header_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            write_pftrack_2d_tracks_txt([], production_start_frame=1, image_height=1080, out_path=out_path)
+            with open(out_path) as f:
+                lines = f.read().rstrip("\n").split("\n")
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[0], '# "Name"')
+
+    def test_frame_before_production_start_raises(self):
+        import tempfile
+        tracks = [{"track_id": "colmap::5", "track_name": "p5", "observations": [
+            {"production_frame": 1, "x": 0.0, "y": 0.0},
+        ]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = str(Path(tmp) / "tracks.txt")
+            with self.assertRaises(ValueError):
+                write_pftrack_2d_tracks_txt(tracks, production_start_frame=5, image_height=1080, out_path=out_path)
+
 
 
 def _track(track_id, observations, structural_status="VALID"):

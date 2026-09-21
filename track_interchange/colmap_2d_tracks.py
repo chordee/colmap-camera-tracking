@@ -290,11 +290,11 @@ def sample_tracks(tracks, max_tracks, seed=None):
 def write_3de_2d_tracks_txt(tracks, production_start_frame, image_height, out_path):
     """Write 3DEqualizer's native 2D Tracks ASCII format (ADAPTER_3DE_R5.md
     v1 contract, cross-verified against the real bundled export_tracks.py):
-    TRACK_COUNT, then per track: name / static field "0" (verified-working
-    native format field; semantic meaning not confirmed upstream, must not
-    be promoted to a semantic concept here either) / sample count / one
-    "<frame> <x> <y>" line per observation. Zero blank lines, zero comments,
-    no indentation -- 3DE's grammar is exact-whitespace sensitive.
+    TRACK_COUNT, then per track: name / point color ("0" is red, per
+    tracksperanto's Export::Equalizer4, which emits this same format) /
+    sample count / one "<frame> <x> <y>" line per observation. Zero blank
+    lines, zero comments, no indentation -- 3DE's grammar is
+    exact-whitespace sensitive.
 
     COLMAP's coordinates are top-left-origin, Y-down. This 3DE format's Y is
     bottom-left-origin, Y-up. Y is flipped as y_3de = image_height - y_colmap
@@ -316,4 +316,60 @@ def write_3de_2d_tracks_txt(tracks, production_start_frame, image_height, out_pa
             lines.append(f"{frame_3de} {obs['x']:.15f} {y_3de:.15f}")
 
     with open(out_path, "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def write_pftrack_2d_tracks_txt(tracks, production_start_frame, image_height, out_path):
+    """Write PFTrack's native 2D track ASCII format (issue #16's
+    ADAPTER_PFTRACK_2017.md verified block grammar): a comment header, then
+    per track a blank separator line / quoted name / clipNumber / frameCount
+    / one "<frame> <x> <y> <similarity>" line per observation.
+
+    Frame numbering matches write_3de_2d_tracks_txt: 1-based and relative to
+    production_start_frame, so both exports describe the same shot on the
+    same frame base.
+
+    Y is flipped as y_pftrack = image_height - y_colmap. ADAPTER_PFTRACK_2017.md
+    claims direct pixel pass-through, but that is written from a source whose
+    coordinates are already bottom-left/Y-up. tracksperanto's PFTrack and
+    Equalizer4 exporters both write their internal bottom-left-origin Y
+    unflipped, and its Equalizer4 output is byte-for-byte the format this
+    module's 3DE writer produces -- which real 3DE confirmed is Y-up. PFTrack
+    therefore shares 3DE's bottom-left convention, and COLMAP's top-left/Y-down
+    coordinates need the same flip. NOT yet confirmed against a real PFTrack
+    import.
+
+    clipNumber is written as 1 (the verified target-format value) and
+    similarity as 1.000000. Both are format-required fields with no COLMAP
+    counterpart -- similarity in particular is NOT a real tracking-quality
+    measure and must not be read as one.
+
+    tracksperanto additionally subtracts 0.5 px from PFTrack coordinates (a
+    pixel-center convention it does not apply to 3DE). That asymmetry cannot
+    be verified here, so no offset is applied.
+
+    Line endings are CRLF, matching tracksperanto's PFTrack exporter."""
+    lines = [
+        '# "Name"',
+        "# clipNumber",
+        "# frameCount",
+        "# frame, xpos, ypos, similarity",
+    ]
+    for t in tracks:
+        lines.append("")
+        lines.append('"' + t["track_name"] + '"')
+        lines.append("1")
+        lines.append(str(len(t["observations"])))
+        for obs in t["observations"]:
+            frame_pftrack = obs["production_frame"] - production_start_frame + 1
+            if frame_pftrack < 1:
+                raise ValueError(
+                    f"production_frame {obs['production_frame']} is before "
+                    f"production_start_frame {production_start_frame} "
+                    f"(resulting PFTrack frame {frame_pftrack} < 1)"
+                )
+            y_pftrack = image_height - obs["y"]
+            lines.append(f"{frame_pftrack} {obs['x']:.15f} {y_pftrack:.15f} 1.000000")
+
+    with open(out_path, "w", newline="\r\n") as f:
         f.write("\n".join(lines) + "\n")

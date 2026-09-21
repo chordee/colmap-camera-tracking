@@ -3,16 +3,41 @@ import sys
 import traceback
 
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
+    QLineEdit, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
     QSpinBox, QFormLayout,
 )
 
 from colmap_2d_tracks import (
     SceneLoadError, filter_by_min_observations, is_exportable, load_scene,
-    sample_tracks, write_3de_2d_tracks_txt, write_structural_qc_report,
+    sample_tracks, write_3de_2d_tracks_txt, write_pftrack_2d_tracks_txt,
+    write_structural_qc_report,
 )
 from candidate_pool import write_candidate_coverage_json, write_track_analysis_report
+
+
+EXPORT_FORMATS = [
+    {
+        "label": "3DEqualizer 4",
+        "suffix": "_3de_2d_tracks.txt",
+        "writer": write_3de_2d_tracks_txt,
+        "next_steps": [
+            "1. In 3DE, use the 2D Tracks import feature (Object Browser or "
+            "File > Import, depending on your 3DE R5 setup) to import this file.",
+        ],
+    },
+    {
+        "label": "PFTrack 2017",
+        "suffix": "_pftrack_2d_tracks.txt",
+        "writer": write_pftrack_2d_tracks_txt,
+        "next_steps": [
+            "1. In PFTrack, import this file as a 2D track file.",
+            "2. This format has not yet been confirmed against a real PFTrack "
+            "import -- please verify the tracks land where you expect, "
+            "especially vertically.",
+        ],
+    },
+]
 
 
 class PathPicker(QWidget):
@@ -42,7 +67,7 @@ class PathPicker(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("COLMAP -> 3DEqualizer 2D Track Export")
+        self.setWindowTitle("COLMAP -> 2D Track Export")
         self.resize(640, 480)
         self._scene = None
 
@@ -60,6 +85,11 @@ class MainWindow(QMainWindow):
 
         self.output_dir = PathPicker(mode="dir")
         form.addRow("Output folder:", self.output_dir)
+
+        self.export_format = QComboBox()
+        for fmt in EXPORT_FORMATS:
+            self.export_format.addItem(fmt["label"])
+        form.addRow("Target software:", self.export_format)
 
         self.production_start_frame = QSpinBox()
         self.production_start_frame.setRange(1, 1_000_000)
@@ -184,14 +214,15 @@ class MainWindow(QMainWindow):
         filtered_tracks = filter_by_min_observations(exportable_tracks, min_observations)
         tracks_to_export = sample_tracks(filtered_tracks, max_tracks)
 
-        tracks_path = os.path.join(output_dir, f"{scene_name}_2d_tracks.txt")
+        export_format = EXPORT_FORMATS[self.export_format.currentIndex()]
+        tracks_path = os.path.join(output_dir, scene_name + export_format["suffix"])
         qc_report_path = os.path.join(output_dir, f"{scene_name}_structural_qc.txt")
         analysis_path = os.path.join(output_dir, f"{scene_name}_track_analysis.txt")
         coverage_path = os.path.join(output_dir, f"{scene_name}_candidate_coverage_pre_selection.json")
 
         try:
             os.makedirs(output_dir, exist_ok=True)
-            write_3de_2d_tracks_txt(tracks_to_export, production_start_frame, scene["height"], tracks_path)
+            export_format["writer"](tracks_to_export, production_start_frame, scene["height"], tracks_path)
             write_structural_qc_report(scene["tracks"], qc_report_path)
             if self.pre_audit_checkbox.isChecked():
                 # exportable_tracks IS the Production Candidate Pool (Issue 03) --
@@ -222,8 +253,8 @@ class MainWindow(QMainWindow):
             self._log(f"Wrote candidate coverage pre-audit to: {coverage_path}")
         self._log("")
         self._log("Next steps:")
-        self._log("1. In 3DE, use the 2D Tracks import feature (Object Browser or "
-                   "File > Import, depending on your 3DE R5 setup) to import this file.")
+        for step in export_format["next_steps"]:
+            self._log(step)
 
 
 def main():
