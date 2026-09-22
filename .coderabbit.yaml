@@ -1,0 +1,11 @@
+# CodeRabbit repository configuration.
+# Only the keys set here are overridden; everything else comes from the
+# organization settings.
+reviews:
+  pre_merge_checks:
+    docstrings:
+      # This repo's test suites deliberately carry no docstrings -- the test
+      # method names are the description. Counting them drags the diff-scoped
+      # coverage far below any useful threshold and the check stops carrying
+      # signal.
+      mode: "off"
