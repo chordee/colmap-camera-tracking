@@ -1,11 +1,12 @@
 # CodeRabbit repository configuration.
-# Only the keys set here are overridden; everything else comes from the
-# organization settings.
+# inheritance merges this file over the organization settings instead of
+# replacing them, so the only key this repo actually changes is the one below.
+inheritance: true
 reviews:
   pre_merge_checks:
     docstrings:
       # This repo's test suites deliberately carry no docstrings -- the test
-      # method names are the description. Counting them drags the diff-scoped
-      # coverage far below any useful threshold and the check stops carrying
-      # signal.
+      # method names are the description. The check is diff-scoped and counts
+      # them, so any PR that adds tests is pushed far below the threshold
+      # regardless of how well the production code is documented.
       mode: "off"
