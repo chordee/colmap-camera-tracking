@@ -1,14 +1,15 @@
 # track_interchange
 
 Export COLMAP's raw 2D feature tracks (from a processed COLMAP sparse
-reconstruction) to 3DEqualizer4's native "2D Tracks" ASCII format.
+reconstruction) to a matchmove application's native 2D track format.
+3DEqualizer4 and PFTrack 2017 are supported.
 
 This is a separate, parallel tool from the 3D-camera/point-cloud exporter
 used elsewhere in this repo. It does not touch COLMAP's solved 3D camera
 path or point cloud — it re-derives *persistent 2D tracks* directly from
 `images.txt`'s per-image 2D observations, keyed by COLMAP's `POINT3D_ID`,
-so a 3DE artist can re-track/re-solve from the original 2D data inside
-3DEqualizer instead of trusting COLMAP's 3D solve as-is.
+so a matchmove artist can re-track/re-solve from the original 2D data in
+their own application instead of trusting COLMAP's 3D solve as-is.
 
 ## Requirements
 
@@ -31,10 +32,15 @@ uv run track_interchange/gui_2d_track_export.py
    containing `sparse/0/cameras.txt` and `sparse/0/images.txt`). The
    "Tracks available" label updates live once a valid scene is selected.
 2. **Output folder** — where the exported files will be written.
-3. **Production start frame** — the frame number your 3DE shot's first
-   frame corresponds to (used to remap COLMAP's frame numbers, parsed from
-   image filenames, onto 3DE's 1-based sequence frame numbers).
-4. **Min observations / Max tracks** — optional thresholds, both default to
+3. **Target software** — which native format to write, 3DEqualizer 4 or
+   PFTrack 2017. Everything upstream of the writer (parsing, structural QC,
+   duplicate detection, thresholds, the pre-audit) is identical for both;
+   only the output file's format and name change. See Target formats below.
+4. **Production start frame** — the frame number your shot's first frame
+   corresponds to (used to remap COLMAP's frame numbers, parsed from image
+   filenames, onto the target's 1-based sequence frame numbers). Both
+   supported formats use the same 1-based frame base.
+5. **Min observations / Max tracks** — optional thresholds, both default to
    **0 (no filter / no limit)**. With the defaults, every track in the
    Production Candidate Pool (see Structural QC below) is exported —
    nothing is sampled or dropped unless you explicitly set one of these.
@@ -43,21 +49,56 @@ uv run track_interchange/gui_2d_track_export.py
    randomly samples down to a cap, useful when a scene has far more tracks
    than are practical to import at once. Both are live-previewed against
    the **exportable** track count before you export.
-5. **Generate candidate coverage pre-audit** — optional, default checked.
+6. **Generate candidate coverage pre-audit** — optional, default checked.
    May slow down export on large scenes (it does a full pass over every
    candidate track's observations). See Production Candidate Pool below.
-6. **Export** — writes files to the output folder:
-   - `<scene_name>_2d_tracks.txt` — the 3DE-native 2D Tracks file, ready to
-     import.
+7. **Export** — writes files to the output folder:
+   - `<scene_name>_3de_2d_tracks.txt` or `<scene_name>_pftrack_2d_tracks.txt`
+     — the native 2D track file for the selected target, ready to import.
+     The name carries the target so the two never overwrite each other.
    - `<scene_name>_structural_qc.txt` — a QC report (see below).
    - `<scene_name>_track_analysis.txt` and
      `<scene_name>_candidate_coverage_pre_selection.json` — written only if
      the pre-audit checkbox is checked (see Production Candidate Pool
      below).
 
+## Target formats
+
+Both writers take the same track list and differ only in how they serialize
+it. Neither ever filters, reorders, or interpolates — what the pool contains
+is what gets written.
+
+- **3DEqualizer 4** (`write_3de_2d_tracks_txt`) — 3DE's native "2D Tracks"
+  ASCII format. Exact-whitespace-sensitive: no blank lines, no comments, no
+  indentation. Verified against a real 3DEqualizer4 import.
+- **PFTrack 2017** (`write_pftrack_2d_tracks_txt`) — PFTrack's native block
+  grammar: a comment header, then per track a blank separator line, the
+  quoted track name, `clipNumber`, `frameCount`, and one
+  `<frame> <x> <y> <similarity>` row per observation. CRLF line endings.
+  `clipNumber` is written as `1` and `similarity` as `1.000000`; both are
+  format-required fields with no COLMAP counterpart, and `similarity` in
+  particular is **not** a real tracking-quality measure — do not read it as
+  one.
+
+Both formats use a bottom-left origin with Y pointing up, while COLMAP's
+coordinates are top-left origin with Y pointing down, so both writers apply
+`y_out = image_height - y_colmap`.
+
+For 3DE this was confirmed by a real import. For PFTrack it was derived from
+[tracksperanto](https://github.com/guerilla-di/tracksperanto), the
+long-running open-source 2D track converter: its internal coordinates are
+documented as pixels off the bottom-left corner, and both its PFTrack and its
+3DE v4 exporters write that Y through unflipped. Since its 3DE v4 output is
+the same format this tool's 3DE writer produces — the one real 3DE confirmed
+is Y-up — PFTrack shares that convention. Note this contradicts the "direct
+pixel pass-through" wording in the PFTrack spec contributed in issue #16; that
+wording holds only for sources that are already bottom-left/Y-up, which COLMAP
+is not. See Validation below for what this does and does not guarantee.
+
 ## Structural QC and Exact Duplicate filtering
 
-Not every 2D observation COLMAP records is safe to hand to 3DE as-is. Before
+Not every 2D observation COLMAP records is safe to hand to a matchmove
+application as-is. Before
 export, every track is classified and only clean tracks are written out:
 
 - **structural_status** — `VALID`, or one of:
@@ -76,7 +117,7 @@ export, every track is classified and only clean tracks are written out:
   lowest-numbered `POINT3D_ID` in a duplicate group is kept as `UNIQUE`;
   the rest are tagged as duplicates of it.
 
-A track is only ever written to `<scene_name>_2d_tracks.txt` if
+A track is only ever written to the exported 2D track file if
 `structural_status == "VALID"` and `duplicate_status == "UNIQUE"`. Every
 track that fails either check is retained internally (never silently
 dropped) and listed by name in `<scene_name>_structural_qc.txt`, along with
@@ -123,9 +164,9 @@ callable directly — see `write_track_analysis_report` and
 
 ## Validation
 
-Every change to this tool's export format has been verified by actually
-importing the output into a real 3DEqualizer4 install, not just by
-passing this project's own unit tests. This distinction matters: a file
+Every change to this tool's **3DEqualizer** export format has been verified
+by actually importing the output into a real 3DEqualizer4 install, not just
+by passing this project's own unit tests. This distinction matters: a file
 that satisfies this project's own parser/writer round-trip tests can still
 fail (or succeed with silently wrong geometry) when handed to the real
 target software — this has happened during development here more than
@@ -134,6 +175,19 @@ import; a missing `setCurrentCamera`/`setCurrentPGroup` call that left an
 imported camera with no visible animation despite importing without
 error). Passing this project's tests means the parser-level contract is
 met; it does not by itself mean a real 3DE import will look correct.
+
+The **PFTrack** writer has *not* yet cleared that bar. Its grammar comes from
+the spec contributed in issue #16 (which reports a verified PFTrack
+round-trip) and its coordinate convention from cross-referencing tracksperanto
+against this project's own verified 3DE result. That is strong evidence, but
+it is not a real PFTrack import. Treat the PFTrack output as unconfirmed until
+someone loads it in PFTrack and checks that the tracks land where they should
+— vertical placement first, since that is where an inherited assumption would
+show up.
+
+One known deviation: tracksperanto subtracts 0.5 px from PFTrack coordinates
+(a pixel-center convention it does not apply to 3DE). That asymmetry could not
+be verified here, so no offset is applied.
 
 ## Using `colmap_2d_tracks.py` directly
 
@@ -144,7 +198,8 @@ custom filtering, etc.), the core functions are in `colmap_2d_tracks.py`:
 # run from the repo root, so track_interchange resolves as a namespace package
 from track_interchange.colmap_2d_tracks import (
     load_scene, is_exportable, filter_by_min_observations,
-    sample_tracks, write_3de_2d_tracks_txt, write_structural_qc_report,
+    sample_tracks, write_3de_2d_tracks_txt, write_pftrack_2d_tracks_txt,
+    write_structural_qc_report,
 )
 
 scene = load_scene("/path/to/colmap/scene")   # {"width", "height", "tracks"}
@@ -153,9 +208,10 @@ exportable = [t for t in scene["tracks"] if is_exportable(t)]
 tracks = filter_by_min_observations(exportable, min_observations=5)
 tracks = sample_tracks(tracks, max_tracks=20000)
 
+# write_pftrack_2d_tracks_txt takes the same arguments
 write_3de_2d_tracks_txt(
     tracks, production_start_frame=1001,
-    image_height=scene["height"], out_path="out/shot_2d_tracks.txt",
+    image_height=scene["height"], out_path="out/shot_3de_2d_tracks.txt",
 )
 write_structural_qc_report(scene["tracks"], out_path="out/shot_structural_qc.txt")
 ```
@@ -178,16 +234,20 @@ Each track in `scene["tracks"]` is a dict:
 ```
 
 Coordinates in `observations` are in COLMAP's convention (top-left origin,
-Y-down, pixel space). `write_3de_2d_tracks_txt` converts to 3DE's native
-convention (bottom-left origin, Y-up) internally — you don't need to flip
-anything yourself.
+Y-down, pixel space). Both writers convert to their target's bottom-left,
+Y-up convention internally — you don't need to flip anything yourself.
 
-## Importing into 3DEqualizer
+## Importing the result
 
-In 3DE, use the native **2D Tracks** import (Object Browser, or File >
-Import, depending on your 3DE version) and point it at
-`<scene_name>_2d_tracks.txt`. This is 3DE's own bundled ASCII format, not a
-custom one — no plugin required.
+**3DEqualizer** — use the native **2D Tracks** import (Object Browser, or
+File > Import, depending on your 3DE version) and point it at
+`<scene_name>_3de_2d_tracks.txt`. This is 3DE's own bundled ASCII format, not
+a custom one — no plugin required.
+
+**PFTrack** — import `<scene_name>_pftrack_2d_tracks.txt` as a 2D track file.
+This is PFTrack's own native format, so no plugin is required either, but see
+Validation above: this path has not been confirmed against a real PFTrack
+install yet.
 
 ## Tests
 
@@ -195,5 +255,5 @@ custom one — no plugin required.
 uv run python -m unittest discover -s track_interchange/tests -v
 ```
 
-Pure `unittest`, stdlib only — no COLMAP or 3DE installation required to run
-the test suite.
+Pure `unittest`, stdlib only — no COLMAP, 3DE, or PFTrack installation
+required to run the test suite.
